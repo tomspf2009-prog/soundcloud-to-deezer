@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soundcloud-to-deezer"
+dynamic = ["version"]
+description = "Copie une playlist SoundCloud dans tes MP3 perso Deezer, avec les covers d'origine."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "yt-dlp",
+    "imageio-ffmpeg",
+    "mutagen",
+    "requests",
+    "truststore",
+]
+
+[project.scripts]
+sc2deezer = "sc2deezer.__main__:main"
+
+[project.gui-scripts]
+sc2deezer-gui = "sc2deezer.gui:main"
+
+[project.urls]
+Homepage = "https://github.com/tomspf2009-prog/soundcloud-to-deezer"
+
+[tool.setuptools]
+packages = ["sc2deezer"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sc2deezer.__version__" }
+
+[tool.setuptools.package-data]
+sc2deezer = ["assets/*"]

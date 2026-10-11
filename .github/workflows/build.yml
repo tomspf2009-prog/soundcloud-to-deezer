@@ -1,0 +1,56 @@
+# Construit SoundCloud-vers-Deezer.exe à partir du code de ce dépôt, sur les serveurs
+# de GitHub, et le publie dans une release. Tout le monde peut vérifier ce qui a été fait.
+name: Programme Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Installer le programme et PyInstaller
+        run: python -m pip install . pyinstaller
+
+      - name: Construire l'exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name SoundCloud-vers-Deezer
+          --icon sc2deezer/assets/icon.ico
+          --collect-data sc2deezer
+          --collect-data imageio_ffmpeg
+          launcher.py
+
+      - name: Calculer l'empreinte SHA-256
+        shell: bash
+        run: |
+          cd dist
+          sha256sum SoundCloud-vers-Deezer.exe > SHA256.txt
+          cat SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SoundCloud-vers-Deezer
+          path: dist/*
+
+      - name: Publier dans la release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --notes-file .github/release-notes.md
+          gh release upload "$TAG" dist/SoundCloud-vers-Deezer.exe dist/SHA256.txt --clobber
