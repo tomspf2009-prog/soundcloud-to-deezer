@@ -3,8 +3,9 @@
   "private": true,
   "description": "Vidéos de présentation (motion design) de SoundCloud vers Deezer, faites avec Remotion.",
   "scripts": {
-    "studio": "remotion studio",
-    "video": "remotion render Promo out/soundcloud-vers-deezer-promo.mp4",
+    "sound": "node scripts/sound.mjs",
+    "studio": "npm run sound && remotion studio",
+    "video": "npm run sound && remotion render Promo out/soundcloud-vers-deezer-promo.mp4 && remotion render PromoBruitages out/soundcloud-vers-deezer-promo-bruitages.mp4",
     "gif": "remotion render ReadmeDemo ../docs/demo.gif --codec=gif --every-nth-frame=2 --scale=0.6"
   },
   "dependencies": {

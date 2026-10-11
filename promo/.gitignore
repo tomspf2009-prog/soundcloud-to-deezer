@@ -1,2 +1,4 @@
 node_modules/
 out/
+# Bande-son régénérée par scripts/sound.mjs (npm run sound)
+public/soundtrack-*.wav

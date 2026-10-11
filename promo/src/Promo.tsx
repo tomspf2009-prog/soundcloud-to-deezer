@@ -1,5 +1,5 @@
 import React from 'react';
-import {AbsoluteFill, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Html5Audio, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import {TransitionSeries, linearTiming} from '@remotion/transitions';
 import {fade} from '@remotion/transitions/fade';
 import {slide} from '@remotion/transitions/slide';
@@ -215,8 +215,12 @@ const Cta: React.FC = () => {
 	);
 };
 
-export const Promo: React.FC = () => (
+// Bande-son originale générée par scripts/sound.mjs : « full » = instru + bruitages, « sfx » = bruitages seuls.
+export type PromoProps = {soundtrack: 'full' | 'sfx'};
+
+export const Promo: React.FC<PromoProps> = ({soundtrack}) => (
 	<AbsoluteFill>
+		<Html5Audio src={staticFile(`soundtrack-${soundtrack}.wav`)} />
 		<Glow />
 		<TransitionSeries>
 			<TransitionSeries.Sequence durationInFrames={SCENES[0]}>
