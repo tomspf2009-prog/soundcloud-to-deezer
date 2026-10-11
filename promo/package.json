@@ -1,0 +1,18 @@
+{
+  "name": "soundcloud-to-deezer-promo",
+  "private": true,
+  "description": "Vidéos de présentation (motion design) de SoundCloud vers Deezer, faites avec Remotion.",
+  "scripts": {
+    "studio": "remotion studio",
+    "video": "remotion render Promo out/soundcloud-vers-deezer-promo.mp4",
+    "gif": "remotion render ReadmeDemo ../docs/demo.gif --codec=gif --every-nth-frame=2 --scale=0.6"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.529",
+    "@remotion/google-fonts": "4.0.529",
+    "@remotion/transitions": "4.0.529",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.529"
+  }
+}

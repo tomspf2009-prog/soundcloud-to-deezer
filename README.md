@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/fenetre.png" width="560" alt="La fenêtre du programme">
+  <img src="docs/demo.gif" width="768" alt="Démo : on colle le lien d'une playlist SoundCloud, on clique, et les sons arrivent dans Deezer avec leurs covers">
 </p>
 
 ## Ce que ça fait
@@ -32,6 +32,10 @@ Tu retrouves ensuite ta playlist dans Deezer, sur ordinateur comme sur télépho
 Ça marche avec **Deezer Gratuit, Premium et Famille** (avec Famille, tu choisis ton profil).
 
 ## Mode d'emploi
+
+<p align="center">
+  <img src="docs/fenetre.png" width="480" alt="La fenêtre du programme">
+</p>
 
 ### 1. Télécharger le programme
 
@@ -84,8 +88,8 @@ Oui.
 **Certains sons sont marqués « protégé (DRM) ».**
 SoundCloud protège certains sons, souvent ceux des maisons de disques. Ils ne peuvent pas être téléchargés : le programme les passe et copie les autres.
 
-**La playlist SoundCloud a de nouveaux sons.**
-Relance la copie avec le même lien : seuls les nouveaux sons sont ajoutés, sans doublons.
+**Une nouvelle exclu est sortie dans la playlist SoundCloud.**
+Relance la copie avec le même lien : seuls les nouveaux sons sont téléchargés et ajoutés à la fin de la même playlist Deezer, sans doublons. Un son retiré de SoundCloud reste sur Deezer : le programme ne supprime jamais rien.
 
 **Où sont les MP3 téléchargés ?**
 Dans ton dossier `Musique\SoundCloud vers Deezer`. Une fois sur Deezer, tu peux les supprimer si tu veux (ils seront retéléchargés si tu mets la playlist à jour).
@@ -124,6 +128,8 @@ Comment ça marche :
 - **Reprise** : l'avancement est noté dans `state.json`, à côté des MP3, profil par profil.
 
 Le code est dans [`sc2deezer/`](sc2deezer). Les contributions sont bienvenues.
+
+La vidéo de présentation et l'animation ci-dessus sont, elles aussi, faites en code avec [Remotion](https://www.remotion.dev) : voir [`promo/`](promo) (`npm install`, puis `npm run studio` pour les voir et les modifier, `npm run video` / `npm run gif` pour les exporter).
 
 ## English
 
