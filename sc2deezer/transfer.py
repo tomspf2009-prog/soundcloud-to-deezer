@@ -3,6 +3,7 @@
 Tout l'avancement est noté dans state.json, à côté des MP3 : relancer la même
 playlist reprend là où on s'était arrêté, sans rien re-télécharger ni ré-envoyer.
 """
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -35,8 +36,12 @@ def slugify(text, max_len=60):
     return text[:max_len] or "playlist"
 
 
-def song_key(title, artist):
-    return (title or "").casefold().strip(), (artist or "").casefold().strip()
+def file_md5(path):
+    digest = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def friendly_error(exc):
@@ -97,9 +102,9 @@ def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, em
 
     emit("playlist", title=sc_title, total=total, folder=folder)
     ffmpeg = soundcloud.ffmpeg_location()
-    # Sons déjà dans « Mes MP3 » (copie interrompue, dossier supprimé…) : réutilisés, pas de doublons.
-    existing = {song_key(s.get("SNG_TITLE"), s.get("ART_NAME")): int(s["SNG_ID"])
-                for s in dz.personal_songs()}
+    # MP3 déjà dans « Mes MP3 » (copie interrompue, suivi effacé…) : Deezer garde l'empreinte MD5
+    # du fichier envoyé, ce qui permet de les reconnaître à l'identique et d'éviter les doublons.
+    existing = {str(s.get("MD5_ORIGIN") or "").split(".")[0]: int(s["SNG_ID"]) for s in dz.personal_songs()}
     failures = []
 
     # 1. Téléchargement + tags + envoi dans « Mes MP3 »
@@ -120,9 +125,8 @@ def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, em
             if song.get("sng_id"):
                 emit("track", index=n, total=total, text=label, status="already")
                 continue
-            key = song_key(track["title"], track["artist"])
-            reused = existing.get(key)
-            song["sng_id"] = existing[key] = reused or dz.upload_mp3(folder / track["file"])
+            reused = existing.get(file_md5(folder / track["file"]))
+            song["sng_id"] = reused or dz.upload_mp3(folder / track["file"])
             save()
             emit("track", index=n, total=total, text=label, status="already" if reused else "ok")
         except Exception as exc:  # un son en échec ne bloque pas les autres

@@ -99,15 +99,21 @@ class Deezer:
             raise DeezerError(f"Deezer a refusé l'envoi : {data['error']}")
         return data.get("results")
 
-    def personal_songs(self):
-        return (self.call("personal_song.getList", {"nb": 2000, "start": 0}) or {}).get("data", [])
+    def personal_songs(self, tries=3):
+        """« Mes MP3 ». Deezer sert parfois une copie en retard de cette liste : on garde la plus récente."""
+        freshest = {}
+        for _ in range(tries):
+            res = self.call("personal_song.getList", {"nb": 2000, "start": 0}) or {}
+            if int(res.get("version") or 0) >= int(freshest.get("version") or 0):
+                freshest = res
+        return freshest.get("data", [])
 
     def upload_mp3(self, path, timeout=180):
         """Envoie un MP3 dans « Mes MP3 » et renvoie son identifiant une fois traité par Deezer."""
         upload_id = str(self.upload(path, "user", "audio", mime="audio/mpeg"))
         deadline = time.time() + timeout
         while True:
-            for song in self.personal_songs():
+            for song in self.personal_songs(tries=1):
                 if upload_id in (str(song.get("UPLOAD_ID")), str(song.get("SNG_ID"))):
                     return int(song["SNG_ID"])
             if time.time() > deadline:
@@ -129,12 +135,26 @@ class Deezer:
         }))
 
     def add_songs(self, playlist_id, sng_ids):
-        for i in range(0, len(sng_ids), 50):
-            self.call("playlist.addSongs", {
-                "playlist_id": playlist_id,
-                "songs": [[sng_id, 0] for sng_id in sng_ids[i:i + 50]],
-                "offset": -1,
-            })
+        """Ajoute les sons à la fin de la playlist, dans l'ordre, sans doublons."""
+        def add(batch):
+            self.call("playlist.addSongs", {"playlist_id": playlist_id,
+                                            "songs": [[sng_id, 0] for sng_id in batch], "offset": -1})
+
+        ids = list(dict.fromkeys(sng_ids))
+        for i in range(0, len(ids), 50):
+            batch = ids[i:i + 50]
+            try:
+                add(batch)
+            except DeezerError as exc:
+                if "ERROR_DATA_EXISTS" not in str(exc):
+                    raise
+                # Deezer refuse tout le lot si un seul son y est déjà (copie interrompue) : un par un.
+                for sng_id in batch:
+                    try:
+                        add([sng_id])
+                    except DeezerError as exc:
+                        if "ERROR_DATA_EXISTS" not in str(exc):
+                            raise
 
     def set_playlist_cover(self, playlist_id, image_path, mime):
         self.upload(image_path, "playlist", "picture", element_id=playlist_id, mime=mime)
