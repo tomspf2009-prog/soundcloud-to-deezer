@@ -39,24 +39,42 @@ def normalize_url(url):
         host = urlparse(url).hostname or ""
     if not host.endswith("soundcloud.com"):
         raise PlaylistError("Ce lien ne vient pas de SoundCloud. Il doit ressembler à "
+                            "https://soundcloud.com/artiste/nom-du-son ou "
                             "https://soundcloud.com/artiste/sets/nom-de-la-playlist")
     return url
 
 
-def playlist(url):
+# Pages SoundCloud qui listent plusieurs sons (en plus des playlists « /sets/ »).
+LIST_PAGES = {"sets", "likes", "tracks", "reposts", "albums", "popular-tracks", "toptracks"}
+
+
+def guess_kind(url):
+    """« track », « playlist » ou None, d'après la forme du lien (sans appel réseau)."""
+    url = (url or "").strip()
+    parsed = urlparse(url if url.startswith("http") else "https://" + url)
+    host = parsed.hostname or ""
+    if not host.endswith("soundcloud.com") or host == "on.soundcloud.com":
+        return None
+    path = [p for p in parsed.path.split("/") if p]
+    if len(path) == 1 or (len(path) >= 2 and path[1] in LIST_PAGES):
+        return "playlist"
+    return "track" if len(path) >= 2 else None
+
+
+def fetch(url):
+    """Lit un lien SoundCloud : une playlist (info["_type"] == "playlist") ou un seul son."""
     try:
         with yt_dlp.YoutubeDL({**BASE_OPTS, "extract_flat": "in_playlist"}) as ydl:
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as exc:
-        raise PlaylistError("Impossible de lire cette playlist SoundCloud. Vérifie le lien, "
-                            "et qu'elle est bien publique (ou que le lien privé est complet).") from exc
-    if info.get("_type") != "playlist":
-        raise PlaylistError("Ce lien mène à un seul son, pas à une playlist. "
-                            "Ouvre la playlist sur SoundCloud et copie son lien.")
-    entries = [e for e in info.get("entries") or [] if e]
-    if not entries:
-        raise PlaylistError("Cette playlist SoundCloud est vide.")
-    info["entries"] = entries
+        if "DRM" in str(exc):
+            raise PlaylistError("Ce son est protégé par SoundCloud (DRM) : impossible de le télécharger.") from exc
+        raise PlaylistError("Impossible de lire ce lien SoundCloud. Vérifie qu'il est complet, "
+                            "et que le son ou la playlist est bien public (ou que le lien privé est complet).") from exc
+    if info.get("_type") == "playlist":
+        info["entries"] = [e for e in info.get("entries") or [] if e]
+        if not info["entries"]:
+            raise PlaylistError("Cette playlist SoundCloud est vide.")
     return info
 
 

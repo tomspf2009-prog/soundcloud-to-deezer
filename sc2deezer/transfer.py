@@ -1,7 +1,8 @@
-"""Le transfert complet : SoundCloud -> MP3 -> « Mes MP3 » Deezer -> playlist + cover.
+"""Le transfert complet : SoundCloud -> MP3 -> « Mes MP3 » Deezer -> playlist + cover (+ Coups de cœur).
 
-Tout l'avancement est noté dans state.json, à côté des MP3 : relancer la même
-playlist reprend là où on s'était arrêté, sans rien re-télécharger ni ré-envoyer.
+Marche avec une playlist ou un seul son. Tout l'avancement est noté dans state.json,
+à côté des MP3 : relancer le même lien reprend là où on s'était arrêté, sans rien
+re-télécharger ni ré-envoyer.
 """
 import hashlib
 import json
@@ -16,6 +17,8 @@ from .config import default_output_dir
 from .deezer import Deezer
 from .soundcloud import PlaylistError
 
+SINGLES_FOLDER = "Sons seuls"
+
 
 class Cancelled(Exception):
     pass
@@ -23,11 +26,13 @@ class Cancelled(Exception):
 
 @dataclass
 class Result:
-    playlist_url: str
+    url: str  # la playlist Deezer, ou les Coups de cœur / Mes MP3 pour un son seul
     title: str
     profile: str
     count: int
     folder: Path
+    kind: str = "playlist"  # ou "track"
+    liked: int = 0
     failures: list = field(default_factory=list)
 
 
@@ -72,8 +77,87 @@ def load_state(path, legacy_owner):
     return state
 
 
-def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, emit=None, stop=None):
-    """Copie la playlist. `emit(kind, **data)` reçoit l'avancement, `stop` (threading.Event) l'interrompt."""
+def known_uploads(root, user_id):
+    """Sons déjà envoyés sur ce profil, depuis n'importe quel dossier (playlists, sons seuls).
+
+    Renvoie {id SoundCloud: (id Deezer, titre, artiste)}.
+    """
+    known = {}
+    for path in Path(root).glob("*/state.json"):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for sc_id, song in ((state.get("deezer") or {}).get(str(user_id)) or {}).get("songs", {}).items():
+            track = (state.get("tracks") or {}).get(sc_id) or {}
+            if song.get("sng_id") and track.get("title"):
+                known[sc_id] = (song["sng_id"], track["title"], track.get("artist", ""))
+    return known
+
+
+class Job:
+    """Un dossier de MP3 + son suivi, pour un profil Deezer donné."""
+
+    def __init__(self, dz, folder):
+        self.dz = dz
+        self.folder = folder
+        folder.mkdir(parents=True, exist_ok=True)
+        self.state_path = folder / "state.json"
+        self.state = load_state(self.state_path, dz.main_user_id)
+        self.mine = self.state["deezer"].setdefault(str(dz.user_id), {})
+        self.songs = self.mine.setdefault("songs", {})
+        self.ffmpeg = soundcloud.ffmpeg_location()
+        # MP3 déjà dans « Mes MP3 » (copie interrompue, suivi effacé…) : Deezer garde l'empreinte MD5
+        # du fichier envoyé, ce qui permet de les reconnaître à l'identique et d'éviter les doublons.
+        self.existing = {str(s.get("MD5_ORIGIN") or "").split(".")[0]: int(s["SNG_ID"]) for s in dz.personal_songs()}
+        # Un même son retéléchargé n'a pas la même empreinte : on s'appuie aussi sur les autres copies.
+        self.known = known_uploads(folder.parent, dz.user_id)
+        self.live_ids = set(self.existing.values())
+
+    def save(self):
+        self.state_path.write_text(json.dumps(self.state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def copy_track(self, sc_id, source_url):
+        """Télécharge (si besoin) un son, puis l'envoie dans « Mes MP3 ». Renvoie (libellé, statut)."""
+        track = self.state["tracks"].setdefault(sc_id, {})
+        song = self.songs.setdefault(sc_id, {})
+        if song.get("sng_id") and track.get("title"):  # déjà sur Deezer : même plus besoin du MP3 local
+            return f"{track['artist']} - {track['title']}", "already"
+        known = self.known.get(sc_id)
+        if known and known[0] in self.live_ids:
+            # Déjà sur ce profil (copié avec une autre playlist ou en son seul) : rien à télécharger.
+            song["sng_id"] = known[0]
+            track.setdefault("title", known[1])
+            track.setdefault("artist", known[2])
+            self.save()
+            return f"{track['artist']} - {track['title']}", "already"
+        if not track.get("file") or not (self.folder / track["file"]).exists():
+            info, path = soundcloud.download_track(source_url, self.folder, self.ffmpeg)
+            title, artist, artwork = soundcloud.track_metadata(info)
+            soundcloud.tag_mp3(path, title, artist, soundcloud.best_artwork(artwork))
+            track.update(file=path.name, title=title, artist=artist)
+            self.save()
+        label = f"{track['artist']} - {track['title']}"
+        reused = self.existing.get(file_md5(self.folder / track["file"]))
+        song["sng_id"] = reused or self.dz.upload_mp3(self.folder / track["file"])
+        self.save()
+        return label, "already" if reused else "ok"
+
+    def like(self, songs, emit):
+        """Like les sons qui ne l'ont jamais été par le programme (un like retiré à la main n'est pas remis)."""
+        todo = [s for s in songs if s.get("sng_id") and not s.get("liked")]
+        if todo:
+            emit("status", text=f"Ajout de {len(todo)} son(s) à tes Coups de cœur…")
+            self.dz.like_songs([s["sng_id"] for s in todo])
+            for s in todo:
+                s["liked"] = True
+            self.save()
+        return len(todo)
+
+
+def run(url, arl, *, profile_id=None, name=None, public=False, like=None, out_root=None, emit=None, stop=None):
+    """Copie une playlist ou un son. `like` : ajouter aux Coups de cœur (None = oui pour un son seul,
+    non pour une playlist). `emit(kind, **data)` reçoit l'avancement, `stop` (threading.Event) l'interrompt."""
     emit = emit or (lambda kind, **data: None)
 
     def check_stop():
@@ -84,63 +168,63 @@ def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, em
     emit("status", text="Connexion à Deezer…")
     dz = Deezer(arl, profile_id)
     emit("connected", user=dz.user_name)
+    emit("status", text="Lecture du lien SoundCloud…")
+    info = soundcloud.fetch(url)
+    root = Path(out_root or default_output_dir())
+    if info.get("_type") == "playlist":
+        return _run_playlist(dz, url, info, root, name, public, bool(like), emit, check_stop)
+    return _run_single(dz, url, info, root, like is not False, emit)
 
-    emit("status", text="Lecture de la playlist SoundCloud…")
-    pl = soundcloud.playlist(url)
+
+def _run_single(dz, url, info, root, like, emit):
+    job = Job(dz, root / SINGLES_FOLDER)
+    emit("playlist", title=info.get("title") or "son", total=1, folder=job.folder, source="track")
+    emit("progress", index=1, total=1)
+    sc_id = str(info["id"])
+    label, status = job.copy_track(sc_id, info.get("webpage_url") or url)
+    emit("track", index=1, total=1, text=label, status=status)
+    liked = job.like([job.songs[sc_id]], emit) if like else 0
+    return Result(
+        url=dz.library_url("loved" if like else "personal_song"),
+        title=label,
+        profile=dz.user_name,
+        count=1,
+        folder=job.folder,
+        kind="track",
+        liked=liked,
+    )
+
+
+def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
     entries = pl["entries"]
     total = len(entries)
     sc_title = pl.get("title") or "SoundCloud"
-    folder = Path(out_root or default_output_dir()) / f"{slugify(sc_title)}-{pl['id']}"
-    folder.mkdir(parents=True, exist_ok=True)
-    state_path = folder / "state.json"
-    state = load_state(state_path, dz.main_user_id)
-    mine = state["deezer"].setdefault(str(dz.user_id), {})
-    songs = mine.setdefault("songs", {})
-
-    def save():
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    emit("playlist", title=sc_title, total=total, folder=folder)
-    ffmpeg = soundcloud.ffmpeg_location()
-    # MP3 déjà dans « Mes MP3 » (copie interrompue, suivi effacé…) : Deezer garde l'empreinte MD5
-    # du fichier envoyé, ce qui permet de les reconnaître à l'identique et d'éviter les doublons.
-    existing = {str(s.get("MD5_ORIGIN") or "").split(".")[0]: int(s["SNG_ID"]) for s in dz.personal_songs()}
+    job = Job(dz, root / f"{slugify(sc_title)}-{pl['id']}")
+    emit("playlist", title=sc_title, total=total, folder=job.folder, source="playlist")
     failures = []
 
     # 1. Téléchargement + tags + envoi dans « Mes MP3 »
     for n, entry in enumerate(entries, 1):
         check_stop()
         sc_id = str(entry.get("id"))
-        track = state["tracks"].setdefault(sc_id, {})
-        song = songs.setdefault(sc_id, {})
         emit("progress", index=n, total=total)
         try:
-            if not track.get("file") or not (folder / track["file"]).exists():
-                info, path = soundcloud.download_track(entry["url"], folder, ffmpeg)
-                title, artist, artwork = soundcloud.track_metadata(info)
-                soundcloud.tag_mp3(path, title, artist, soundcloud.best_artwork(artwork))
-                track.update(file=path.name, title=title, artist=artist)
-                save()
-            label = f"{track['artist']} - {track['title']}"
-            if song.get("sng_id"):
-                emit("track", index=n, total=total, text=label, status="already")
-                continue
-            reused = existing.get(file_md5(folder / track["file"]))
-            song["sng_id"] = reused or dz.upload_mp3(folder / track["file"])
-            save()
-            emit("track", index=n, total=total, text=label, status="already" if reused else "ok")
+            label, status = job.copy_track(sc_id, entry["url"])
+            emit("track", index=n, total=total, text=label, status=status)
         except Exception as exc:  # un son en échec ne bloque pas les autres
+            track = job.state["tracks"].get(sc_id, {})
             what = track.get("title") or entry.get("title") or entry.get("url") or sc_id
             why = friendly_error(exc)
             failures.append((what, why))
             emit("track", index=n, total=total, text=what, status="failed", detail=why)
 
     check_stop()
-    ordered = [songs[str(e.get("id"))] for e in entries]
+    ordered = [job.songs[str(e.get("id"))] for e in entries]
     if not any(s.get("sng_id") for s in ordered):
         raise PlaylistError("Aucun son de cette playlist n'a pu être copié.")
 
     # 2. Playlist Deezer sur ce profil (réutilisée quand on relance)
+    mine = job.mine
     playlist_id = mine.get("playlist_id")
     if playlist_id and not dz.playlist_exists(playlist_id):
         playlist_id = None
@@ -151,7 +235,7 @@ def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, em
         mine.pop("cover_done", None)
         for s in ordered:
             s.pop("added", None)
-        save()
+        job.save()
 
     to_add = [s for s in ordered if s.get("sng_id") and not s.get("added")]
     if to_add:
@@ -159,7 +243,7 @@ def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, em
         dz.add_songs(playlist_id, [s["sng_id"] for s in to_add])
         for s in to_add:
             s["added"] = True
-        save()
+        job.save()
 
     # 3. Cover de la playlist = artwork SoundCloud d'origine
     if not mine.get("cover_done"):
@@ -167,20 +251,25 @@ def run(url, arl, *, profile_id=None, name=None, public=False, out_root=None, em
         cover = soundcloud.best_artwork(soundcloud.playlist_cover_url(url), prefer_original=True)
         if cover:
             data, mime = cover
-            cover_path = folder / ("cover.png" if mime == "image/png" else "cover.jpg")
+            cover_path = job.folder / ("cover.png" if mime == "image/png" else "cover.jpg")
             cover_path.write_bytes(data)
             try:
                 dz.set_playlist_cover(playlist_id, cover_path, mime)
                 mine["cover_done"] = True
-                save()
+                job.save()
             except Exception as exc:
                 failures.append(("cover de la playlist", friendly_error(exc)))
 
+    # 4. Coups de cœur, si demandé
+    liked = job.like(ordered, emit) if like else 0
+
     return Result(
-        playlist_url=f"https://www.deezer.com/fr/playlist/{playlist_id}",
+        url=f"https://www.deezer.com/fr/playlist/{playlist_id}",
         title=name or sc_title,
         profile=dz.user_name,
         count=sum(1 for s in ordered if s.get("added")),
-        folder=folder,
+        folder=job.folder,
+        kind="playlist",
+        liked=liked,
         failures=failures,
     )

@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.font import nametofont
 
-from . import APP_NAME, REPO_URL, __version__, config, transfer
+from . import APP_NAME, REPO_URL, __version__, config, soundcloud, transfer
 from .deezer import Deezer
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -184,21 +184,31 @@ class App:
         self.profiles = []
         self.profile_id = None
 
-        # 2. Playlist SoundCloud
-        source = ttk.LabelFrame(main, text=" 2. Ta playlist SoundCloud ", style="Section.TLabelframe", padding=(12, 6, 12, 10))
+        # 2. Son ou playlist SoundCloud
+        source = ttk.LabelFrame(main, text=" 2. Ton son ou ta playlist SoundCloud ", style="Section.TLabelframe",
+                                padding=(12, 6, 12, 10))
         source.grid(sticky="ew", pady=(0, 8))
         source.columnconfigure(1, weight=1)
         ttk.Label(source, text="Lien :").grid(row=0, column=0, sticky="w")
-        self.url_entry = HintEntry(source, "https://soundcloud.com/artiste/sets/ma-playlist")
+        self.url_entry = HintEntry(source, "lien d'un son ou d'une playlist SoundCloud")
         self.url_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6), padx=(8, 0))
         add_paste_menu(self.url_entry)
+        for sequence in ("<KeyRelease>", "<<Paste>>", "<FocusOut>"):
+            self.url_entry.bind(sequence, lambda e: self.root.after(50, self._on_url_change), add="+")
         ttk.Label(source, text="Nom :").grid(row=1, column=0, sticky="w")
         self.name_entry = HintEntry(source, "facultatif : sinon le même que sur SoundCloud")
         self.name_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6), padx=(8, 0))
         add_paste_menu(self.name_entry)
         self.public_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(source, text="Rendre la playlist publique (elle est privée par défaut)",
-                        variable=self.public_var).grid(row=2, column=0, columnspan=2, sticky="w")
+        self.public_check = ttk.Checkbutton(source, text="Rendre la playlist publique (elle est privée par défaut)",
+                                            variable=self.public_var)
+        self.public_check.grid(row=2, column=0, columnspan=2, sticky="w")
+        self.like_var = tk.BooleanVar(value=False)
+        self.like_touched = False
+        self.like_check = ttk.Checkbutton(source, text="Ajouter à mes Coups de cœur (titres likés)",
+                                          variable=self.like_var, command=self._on_like_click)
+        self.like_check.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.kind = None  # « track » ou « playlist », deviné d'après le lien collé
 
         self.go_button = tk.Button(main, text="Copier vers Deezer", command=self._on_go,
                                    font=("Segoe UI Semibold", 12), fg="white", bg=PURPLE,
@@ -228,8 +238,9 @@ class App:
         self.log.tag_configure("info", foreground=GREY)
 
         self.done_buttons = ttk.Frame(progress)
-        ttk.Button(self.done_buttons, text="Ouvrir la playlist sur Deezer",
-                   command=lambda: webbrowser.open(self.result.playlist_url)).pack(side="left")
+        self.open_button = ttk.Button(self.done_buttons, text="Ouvrir la playlist sur Deezer",
+                                      command=lambda: webbrowser.open(self.result.url))
+        self.open_button.pack(side="left")
         ttk.Button(self.done_buttons, text="Ouvrir le dossier des MP3",
                    command=lambda: open_path(self.result.folder)).pack(side="left", padx=8)
 
@@ -257,11 +268,27 @@ class App:
             self.go_button.configure(text="Arrêter", bg=GREY, activebackground="#4A4D51", state="normal")
         else:
             ready = bool(self.arl and self.profile_id)
-            self.go_button.configure(text="Copier vers Deezer", bg=PURPLE if ready else "#CDB8F7",
-                                     activebackground=PURPLE_DARK, state="normal" if ready else "disabled")
-        for widget in (self.url_entry, self.name_entry):
-            widget.configure(state="disabled" if running else "normal")
+            self.go_button.configure(text="Ajouter à Deezer" if self.kind == "track" else "Copier vers Deezer",
+                                     bg=PURPLE if ready else "#CDB8F7", activebackground=PURPLE_DARK,
+                                     state="normal" if ready else "disabled")
+        single = self.kind == "track"
+        self.url_entry.configure(state="disabled" if running else "normal")
+        self.like_check.configure(state="disabled" if running else "normal")
+        for widget in (self.name_entry, self.public_check):  # sans objet pour un son seul
+            widget.configure(state="disabled" if running or single else "normal")
         self.profile_box.configure(state="disabled" if running else "readonly")
+
+    def _on_url_change(self):
+        kind = soundcloud.guess_kind(self.url_entry.get())
+        if kind == self.kind:
+            return
+        self.kind = kind
+        if not self.like_touched:  # un son seul va dans les Coups de cœur, sauf si on a décoché
+            self.like_var.set(kind == "track")
+        self._refresh_go()
+
+    def _on_like_click(self):
+        self.like_touched = True
 
     def _write(self, text, tag="info"):
         self.log.configure(state="normal")
@@ -380,8 +407,9 @@ class App:
             return
         url = self.url_entry.get().strip()
         if not url:
-            messagebox.showinfo(APP_NAME, "Colle d'abord le lien de ta playlist SoundCloud.")
+            messagebox.showinfo(APP_NAME, "Colle d'abord le lien d'un son ou d'une playlist SoundCloud.")
             return
+        self._on_url_change()
         self.stop.clear()
         self.result = None
         self.done_buttons.grid_forget()
@@ -390,15 +418,15 @@ class App:
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
         self.worker = threading.Thread(target=self._transfer_worker, daemon=True, args=(
-            url, self.name_entry.get().strip() or None, self.public_var.get()))
+            url, self.name_entry.get().strip() or None, self.public_var.get(), self.like_var.get()))
         self.worker.start()
         self._refresh_go()
 
-    def _transfer_worker(self, url, name, public):
+    def _transfer_worker(self, url, name, public, like):
         emit = lambda kind, **data: self.events.put((kind, data))  # noqa: E731
         try:
             result = transfer.run(url, self.arl, profile_id=self.profile_id, name=name, public=public,
-                                  emit=emit, stop=self.stop)
+                                  like=like, emit=emit, stop=self.stop)
             emit("done", result=result)
         except transfer.Cancelled:
             emit("cancelled")
@@ -411,9 +439,12 @@ class App:
     def on_connected(self, user):
         pass
 
-    def on_playlist(self, title, total, folder):
+    def on_playlist(self, title, total, folder, source="playlist"):
         self.bar.configure(maximum=total, value=0)
-        self._write(f"Playlist « {title} » : {total} sons. MP3 enregistrés dans {folder}")
+        if source == "track":
+            self._write(f"Son « {title} ». MP3 enregistré dans {folder}")
+        else:
+            self._write(f"Playlist « {title} » : {total} sons. MP3 enregistrés dans {folder}")
 
     def on_progress(self, index, total):
         self.status.configure(text=f"Son {index} sur {total} : téléchargement et envoi sur Deezer…")
@@ -430,8 +461,16 @@ class App:
     def on_done(self, result):
         self.result = result
         self.bar.configure(value=self.bar["maximum"])
-        summary = (f"Terminé ! {result.count} sons dans la playlist « {displayable(result.title)} » "
-                   f"(profil {displayable(result.profile)}).")
+        profile = displayable(result.profile)
+        if result.kind == "track":
+            where = "tes MP3 et tes Coups de cœur" if self.like_var.get() else "tes MP3"
+            summary = f"C'est fait ! « {displayable(result.title)} » est dans {where} (profil {profile})."
+            self.open_button.configure(text="Ouvrir mes Coups de cœur" if self.like_var.get() else "Ouvrir mes MP3")
+        else:
+            summary = f"Terminé ! {result.count} sons dans la playlist « {displayable(result.title)} » (profil {profile})."
+            if result.liked:
+                summary += f" {result.liked} ajouté(s) à tes Coups de cœur."
+            self.open_button.configure(text="Ouvrir la playlist sur Deezer")
         if result.failures:
             summary += f" {len(result.failures)} élément(s) n'ont pas pu être copiés (détails ci-dessous)."
             self._write("")

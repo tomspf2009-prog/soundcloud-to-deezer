@@ -27,7 +27,9 @@ Tu colles le lien d'une playlist SoundCloud, tu cliques sur un bouton, et le pro
 2. les ajoute à **tes MP3** sur Deezer (la fonction « Mes MP3 » de Deezer), chacun avec sa cover ;
 3. crée une **playlist privée** sur Deezer, avec la même cover que sur SoundCloud.
 
-Tu retrouves ensuite ta playlist dans Deezer, sur ordinateur comme sur téléphone. Les sons ne sont visibles et écoutables que par toi.
+Tu peux aussi coller le lien d'**un seul son** : il est ajouté à tes MP3 et, si tu veux, directement à tes **Coups de cœur** (titres likés).
+
+Tu retrouves tout ensuite dans Deezer, sur ordinateur comme sur téléphone. Les sons ne sont visibles et écoutables que par toi.
 
 Ça marche avec **Deezer Gratuit, Premium et Famille** (avec Famille, tu choisis ton profil).
 
@@ -49,11 +51,14 @@ Le programme te demande ta **clé Deezer**. Il en a besoin pour ajouter les sons
 
 Si ton abonnement est **Famille**, choisis ensuite **ton** profil dans la liste : les MP3 ne pourront être écoutés que sur ce profil.
 
-### 3. Copier ta playlist
+### 3. Copier une playlist ou un son
 
-Sur SoundCloud, ouvre ta playlist et copie son lien (barre d'adresse, ou « Partager » puis « Copier le lien »). Colle-le dans le programme et clique sur **Copier vers Deezer**.
+Sur SoundCloud, ouvre la playlist (ou le son) et copie son lien (barre d'adresse, ou « Partager » puis « Copier le lien »). Colle-le dans le programme et clique sur le gros bouton violet.
 
-Compte quelques secondes par son. Tu peux fermer le programme à tout moment : relance la même playlist plus tard, elle reprendra là où elle s'était arrêtée.
+- Pour **un seul son**, la case « Ajouter à mes Coups de cœur » se coche toute seule : décoche-la si tu veux juste l'ajouter à tes MP3.
+- Pour **une playlist**, coche cette case si tu veux aussi liker tous ses sons.
+
+Compte quelques secondes par son. Tu peux fermer le programme à tout moment : relance le même lien plus tard, la copie reprendra là où elle s'était arrêtée.
 
 ## Trouver ma clé Deezer
 
@@ -91,8 +96,11 @@ SoundCloud protège certains sons, souvent ceux des maisons de disques. Ils ne p
 **Une nouvelle exclu est sortie dans la playlist SoundCloud.**
 Relance la copie avec le même lien : seuls les nouveaux sons sont téléchargés et ajoutés à la fin de la même playlist Deezer, sans doublons. Un son retiré de SoundCloud reste sur Deezer : le programme ne supprime jamais rien.
 
+**J'ajoute un son seul qui est déjà dans une playlist copiée.**
+Pas de doublon : le programme le reconnaît, ne le retélécharge pas, et se contente de le liker si la case est cochée.
+
 **Où sont les MP3 téléchargés ?**
-Dans ton dossier `Musique\SoundCloud vers Deezer`. Une fois sur Deezer, tu peux les supprimer si tu veux (ils seront retéléchargés si tu mets la playlist à jour).
+Dans ton dossier `Musique\SoundCloud vers Deezer` (les sons ajoutés un par un sont dans `Sons seuls`). Une fois sur Deezer, tu peux les supprimer si tu veux : une mise à jour ne retélécharge que les nouveaux sons.
 
 **Y a-t-il une limite ?**
 Deezer accepte jusqu'à 2 000 MP3 perso, de 200 Mo maximum chacun.
@@ -119,7 +127,7 @@ sc2deezer                     # ouvre la fenêtre
 sc2deezer <lien SoundCloud>   # version ligne de commande
 ```
 
-Options de la ligne de commande : `--profil <prénom>` (offre Famille), `--nom`, `--publique`, `--dossier`, `--changer-cle`, `--oublier-cle`. La clé peut aussi être fournie par la variable d'environnement `DEEZER_ARL`.
+Options de la ligne de commande : `--profil <prénom>` (offre Famille), `--coeur` / `--sans-coeur` (Coups de cœur ; automatique pour un son seul), `--nom`, `--publique`, `--dossier`, `--changer-cle`, `--oublier-cle`. La clé peut aussi être fournie par la variable d'environnement `DEEZER_ARL`.
 
 Comment ça marche :
 
@@ -133,7 +141,7 @@ La vidéo de présentation et l'animation ci-dessus sont, elles aussi, faites en
 
 ## English
 
-**SoundCloud → Deezer** copies a SoundCloud playlist into your Deezer account as personal MP3s ("My MP3s"), keeping each track's artwork, and creates a private Deezer playlist with the original SoundCloud cover. It works with Free, Premium and Family plans (you pick your profile).
+**SoundCloud → Deezer** copies a SoundCloud playlist into your Deezer account as personal MP3s ("My MP3s"), keeping each track's artwork, and creates a private Deezer playlist with the original SoundCloud cover. Paste a single track link instead to add it to your MP3s and your Favourite tracks. It works with Free, Premium and Family plans (you pick your profile).
 
 [Download the Windows app](https://github.com/tomspf2009-prog/soundcloud-to-deezer/releases/latest), or run `pipx install git+https://github.com/tomspf2009-prog/soundcloud-to-deezer` on any OS. The app needs your Deezer `arl` cookie (see the steps above: F12 > Application > Cookies > `arl`). The cookie is stored only on your computer and only sent to Deezer. DRM-protected SoundCloud tracks are skipped. Only use it for tracks you are allowed to download.
 

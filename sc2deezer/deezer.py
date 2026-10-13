@@ -158,3 +158,19 @@ class Deezer:
 
     def set_playlist_cover(self, playlist_id, image_path, mime):
         self.upload(image_path, "playlist", "picture", element_id=playlist_id, mime=mime)
+
+    def like_songs(self, sng_ids):
+        """Ajoute des sons aux Coups de cœur (titres likés), comme le bouton ♡ de deezer.com."""
+        ids = list(dict.fromkeys(sng_ids))
+        for i in range(0, len(ids), 50):
+            batch = ids[i:i + 50]
+            try:
+                self.call("song.addFavorites", {"IDS": batch})
+            except DeezerError:
+                # Certains comptes n'ont que l'ancienne méthode, un son à la fois.
+                for sng_id in batch:
+                    self.call("favorite_song.add", {"SNG_ID": sng_id})
+
+    def library_url(self, page):
+        """Lien vers une page de la bibliothèque du profil : « loved » (Coups de cœur) ou « personal_song »."""
+        return f"https://www.deezer.com/fr/profile/{self.user_id}/{page}"
