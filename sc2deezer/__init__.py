@@ -5,6 +5,6 @@ import truststore
 # antivirus ou proxys qui inspectent le HTTPS. Doit passer avant tout appel réseau.
 truststore.inject_into_ssl()
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 APP_NAME = "SoundCloud vers Deezer"
 REPO_URL = "https://github.com/tomspf2009-prog/soundcloud-to-deezer"

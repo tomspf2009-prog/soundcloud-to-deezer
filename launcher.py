@@ -1,4 +1,4 @@
-"""Point d'entrée de l'exécutable Windows (construit par PyInstaller, voir .github/workflows)."""
+"""Point d'entrée de SoundCloud-vers-Deezer.exe (construit par PyInstaller, voir .github/workflows)."""
 from sc2deezer.__main__ import main
 
-main()
+main(dest="deezer")

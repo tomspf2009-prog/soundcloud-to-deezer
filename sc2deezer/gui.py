@@ -15,6 +15,8 @@ from .deezer import Deezer
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 PURPLE, PURPLE_DARK = "#7B2FF7", "#5E1DD1"
+# Couleur du gros bouton : violet pour Deezer, rouge-rose (comme son icône) pour Apple Music.
+ACCENTS = {"deezer": (PURPLE, PURPLE_DARK, "#CDB8F7"), "apple": ("#E8264A", "#C41C3B", "#F5B5C2")}
 GREEN, RED, GREY = "#1E8E3E", "#C5221F", "#5F6368"
 
 ARL_HELP = """\
@@ -96,17 +98,20 @@ class HintEntry(ttk.Entry):
 
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, dest=None):
+        """`dest` : « deezer » ou « apple » pour un programme dédié à une plateforme, None pour le choix."""
         self.root = root
+        self.locked = dest
+        self.app_name = "SoundCloud vers Apple Music" if dest == "apple" else APP_NAME
         self.events = queue.Queue()
         self.arl = ""
         self.worker = None
         self.stop = threading.Event()
         self.result = None
 
-        root.title(APP_NAME)
+        root.title(self.app_name)
         try:
-            root.iconbitmap(default=str(ASSETS / "icon.ico"))
+            root.iconbitmap(default=str(ASSETS / ("icon-apple.ico" if dest == "apple" else "icon.ico")))
         except tk.TclError:
             pass
         self._style()
@@ -143,21 +148,26 @@ class App:
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=1)
 
-        ttk.Label(main, text="SoundCloud  →  Deezer", style="Title.TLabel").grid(sticky="w")
-        ttk.Label(main, text="Copie tes sons et playlists SoundCloud dans Deezer ou Apple Music, avec les covers d'origine.",
+        target = {"deezer": "Deezer", "apple": "Apple Music"}.get(self.locked, "Deezer · Apple Music")
+        ttk.Label(main, text=f"SoundCloud  →  {target}", style="Title.TLabel").grid(sticky="w")
+        where = {"deezer": "dans tes MP3 Deezer", "apple": "dans Apple Music"}.get(self.locked, "dans Deezer ou Apple Music")
+        ttk.Label(main, text=f"Copie tes sons et playlists SoundCloud {where}, avec les covers d'origine.",
                   style="Sub.TLabel").grid(sticky="w", pady=(0, 8))
 
-        # 1. Compte Deezer
-        account = ttk.LabelFrame(main, text=" 1. Où envoyer tes sons ? ", style="Section.TLabelframe", padding=(12, 6, 12, 10))
+        # 1. Destination : compte Deezer, ou Apple Music sur cet ordinateur
+        section = {"deezer": " 1. Ton compte Deezer ", "apple": " 1. Apple Music sur cet ordinateur "}
+        account = ttk.LabelFrame(main, text=section.get(self.locked, " 1. Où envoyer tes sons ? "),
+                                 style="Section.TLabelframe", padding=(12, 6, 12, 10))
         account.grid(sticky="ew", pady=(0, 8))
         account.columnconfigure(0, weight=1)
 
-        self.dest_var = tk.StringVar(value=config.load().get("destination") or "deezer")
-        choices = ttk.Frame(account)
-        choices.pack(fill="x", pady=(0, 6))
-        for value, label in (("deezer", "Deezer"), ("apple", "Apple Music")):
-            ttk.Radiobutton(choices, text=label, value=value, variable=self.dest_var,
-                            command=self._on_dest_change).pack(side="left", padx=(0, 24))
+        self.dest_var = tk.StringVar(value=self.locked or config.load().get("destination") or "deezer")
+        if not self.locked:
+            choices = ttk.Frame(account)
+            choices.pack(fill="x", pady=(0, 6))
+            for value, label in (("deezer", "Deezer"), ("apple", "Apple Music")):
+                ttk.Radiobutton(choices, text=label, value=value, variable=self.dest_var,
+                                command=self._on_dest_change).pack(side="left", padx=(0, 24))
 
         self.apple_mode = applemusic.detect()
         self.apple_area = ttk.Frame(account)
@@ -166,9 +176,9 @@ class App:
         else:
             apple_text = ("Le programme prépare un dossier de MP3, avec leurs covers, que tu n'auras "
                           "plus qu'à glisser dans l'appli Apple Music.")
-        ttk.Label(self.apple_area, text=apple_text, wraplength=520,
+        ttk.Label(self.apple_area, text=apple_text, wraplength=760,
                   style="Ok.TLabel" if self.apple_mode == "itunes" else "TLabel").pack(anchor="w")
-        ttk.Label(self.apple_area, style="Hint.TLabel", wraplength=520, text=(
+        ttk.Label(self.apple_area, style="Hint.TLabel", wraplength=760, text=(
             "Pour les retrouver sur ton iPhone : abonnement Apple Music, avec « Synchroniser la "
             "bibliothèque » activé.")).pack(anchor="w", pady=(4, 0))
 
@@ -291,7 +301,7 @@ class App:
             target = "Apple Music" if self.apple else "Deezer"
             ready = self.apple or bool(self.arl and self.profile_id)
             self.go_button.configure(text=f"Ajouter à {target}" if self.kind == "track" else f"Copier vers {target}",
-                                     bg=PURPLE if ready else "#CDB8F7", activebackground=PURPLE_DARK,
+                                     bg=self.accent[0] if ready else self.accent[2], activebackground=self.accent[1],
                                      state="normal" if ready else "disabled")
         single = self.kind == "track"
         self.url_entry.configure(state="disabled" if running else "normal")
@@ -305,17 +315,24 @@ class App:
     def apple(self):
         return self.dest_var.get() == "apple"
 
+    @property
+    def accent(self):
+        """(normal, appuyé, désactivé)"""
+        return ACCENTS["apple" if self.apple else "deezer"]
+
     def _on_dest_change(self, save=True):
-        if save:
+        if save and not self.locked:
             config.save(destination=self.dest_var.get())
-        if self.apple:
+        if self.apple:  # Coups de cœur et playlist publique : propres à Deezer
             self.deezer_area.pack_forget()
             self.apple_area.pack(fill="x")
-            self.like_check.grid_remove()  # les Coups de cœur sont propres à Deezer
+            self.like_check.grid_remove()
+            self.public_check.grid_remove()
         else:
             self.apple_area.pack_forget()
             self.deezer_area.pack(fill="x")
             self.like_check.grid()
+            self.public_check.grid()
         self._refresh_go()
         self._fit_to_screen()
 
@@ -449,7 +466,7 @@ class App:
 
     def _on_go(self):
         if self.worker and self.worker.is_alive():
-            if messagebox.askyesno(APP_NAME, "Arrêter la copie après le son en cours ?\n\n"
+            if messagebox.askyesno(self.app_name, "Arrêter la copie après le son en cours ?\n\n"
                                    "Rien n'est perdu : relance la même playlist plus tard "
                                    "et elle reprendra là où elle s'est arrêtée."):
                 self.stop.set()
@@ -457,7 +474,7 @@ class App:
             return
         url = self.url_entry.get().strip()
         if not url:
-            messagebox.showinfo(APP_NAME, "Colle d'abord le lien d'un son ou d'une playlist SoundCloud.")
+            messagebox.showinfo(self.app_name, "Colle d'abord le lien d'un son ou d'une playlist SoundCloud.")
             return
         self._on_url_change()
         self.stop.clear()
@@ -562,7 +579,7 @@ class App:
         self.status.configure(text="La copie n'a pas pu aboutir.")
         self._write(f"✗ {text}", "failed")
         self._refresh_go()
-        messagebox.showerror(APP_NAME, text)
+        messagebox.showerror(self.app_name, text)
 
     # ------------------------------------------------------------------ boucle
 
@@ -577,7 +594,7 @@ class App:
 
     def on_close(self):
         if self.worker and self.worker.is_alive():
-            if not messagebox.askyesno(APP_NAME, "La copie est en cours.\n\nSi tu fermes maintenant, rien n'est "
+            if not messagebox.askyesno(self.app_name, "La copie est en cours.\n\nSi tu fermes maintenant, rien n'est "
                                        "perdu : relance la même playlist plus tard et elle reprendra là où "
                                        "elle s'est arrêtée.\n\nFermer quand même ?"):
                 return
@@ -585,7 +602,7 @@ class App:
         self.root.destroy()
 
 
-def main():
+def main(dest=None):
     if sys.platform == "win32":
         try:  # texte net sur les écrans haute résolution
             import ctypes
@@ -593,7 +610,7 @@ def main():
         except Exception:
             pass
     root = tk.Tk()
-    App(root)
+    App(root, dest)
     root.mainloop()
 
 

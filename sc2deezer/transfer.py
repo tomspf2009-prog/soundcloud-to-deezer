@@ -395,6 +395,11 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
             applemusic.write_m3u8(to_import / f"{file_name(title)}.m3u8",
                                   [{**t, "file": f"{n:03d} - {file_name(t['artist'] + ' - ' + t['title'])}.mp3"}
                                    for n, _, t in fresh])
+            if not batches:  # 1re fois : la cover SoundCloud, à mettre comme illustration de la playlist
+                cover = soundcloud.best_artwork(soundcloud.playlist_cover_url(url), prefer_original=True)
+                if cover:
+                    data, mime = cover
+                    (to_import / f"cover de la playlist.{'png' if mime == 'image/png' else 'jpg'}").write_bytes(data)
         else:
             to_import = to_import / songs[fresh[0][1]]
         save()
