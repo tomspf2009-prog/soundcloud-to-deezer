@@ -31,7 +31,7 @@ Tu peux aussi coller le lien d'**un seul son** : il est ajouté à tes MP3 et, s
 
 Tu retrouves tout ensuite dans Deezer, sur ordinateur comme sur téléphone. Les sons ne sont visibles et écoutables que par toi.
 
-Ça marche avec **Deezer Gratuit, Premium et Famille** (avec Famille, tu choisis ton profil).
+Ça marche avec **Deezer Gratuit, Premium et Famille** (avec Famille, tu choisis ton profil), et aussi avec **Apple Music** (voir [plus bas](#apple-music)).
 
 ## Mode d'emploi
 
@@ -59,6 +59,15 @@ Sur SoundCloud, ouvre la playlist (ou le son) et copie son lien (barre d'adresse
 - Pour **une playlist**, coche cette case si tu veux aussi liker tous ses sons.
 
 Compte quelques secondes par son. Tu peux fermer le programme à tout moment : relance le même lien plus tard, la copie reprendra là où elle s'était arrêtée.
+
+## Apple Music
+
+Choisis **Apple Music** en haut de la fenêtre. Pas besoin de clé : Apple ne permet à aucun programme d'envoyer de la musique dans ta bibliothèque en ligne, donc tout passe par le logiciel d'Apple installé sur ton ordinateur. Le programme s'adapte tout seul :
+
+- **Tu as iTunes** : les sons (avec leurs covers) et la playlist y sont ajoutés **automatiquement**.
+- **Tu as l'appli Apple Music** (ou rien) : le programme prépare un dossier de MP3, avec leurs covers et des noms lisibles, et l'ouvre. **Glisse-le dans l'appli Apple Music**, puis laisse-le à cet endroit : Apple Music lit les sons depuis ce dossier. À chaque mise à jour, un nouveau dossier ne contient que les nouveaux sons.
+
+Pour retrouver les sons sur ton **iPhone**, il faut un abonnement Apple Music avec « Synchroniser la bibliothèque » activé. Sans abonnement, ils restent sur l'ordinateur.
 
 ## Trouver ma clé Deezer
 
@@ -127,7 +136,7 @@ sc2deezer                     # ouvre la fenêtre
 sc2deezer <lien SoundCloud>   # version ligne de commande
 ```
 
-Options de la ligne de commande : `--profil <prénom>` (offre Famille), `--coeur` / `--sans-coeur` (Coups de cœur ; automatique pour un son seul), `--nom`, `--publique`, `--dossier`, `--changer-cle`, `--oublier-cle`. La clé peut aussi être fournie par la variable d'environnement `DEEZER_ARL`.
+Options de la ligne de commande : `--vers apple` (Apple Music au lieu de Deezer), `--profil <prénom>` (offre Famille), `--coeur` / `--sans-coeur` (Coups de cœur ; automatique pour un son seul), `--nom`, `--publique`, `--dossier`, `--changer-cle`, `--oublier-cle`. La clé peut aussi être fournie par la variable d'environnement `DEEZER_ARL`.
 
 Comment ça marche :
 
@@ -141,7 +150,7 @@ La vidéo de présentation et l'animation ci-dessus sont, elles aussi, faites en
 
 ## English
 
-**SoundCloud → Deezer** copies a SoundCloud playlist into your Deezer account as personal MP3s ("My MP3s"), keeping each track's artwork, and creates a private Deezer playlist with the original SoundCloud cover. Paste a single track link instead to add it to your MP3s and your Favourite tracks. It works with Free, Premium and Family plans (you pick your profile).
+**SoundCloud → Deezer** copies a SoundCloud playlist into your Deezer account as personal MP3s ("My MP3s"), keeping each track's artwork, and creates a private Deezer playlist with the original SoundCloud cover. Paste a single track link instead to add it to your MP3s and your Favourite tracks. It works with Free, Premium and Family plans (you pick your profile). It can also send everything to **Apple Music**: imported automatically (with the playlist) if iTunes is installed, otherwise prepared as a folder to drag into the Apple Music app.
 
 [Download the Windows app](https://github.com/tomspf2009-prog/soundcloud-to-deezer/releases/latest), or run `pipx install git+https://github.com/tomspf2009-prog/soundcloud-to-deezer` on any OS. The app needs your Deezer `arl` cookie (see the steps above: F12 > Application > Cookies > `arl`). The cookie is stored only on your computer and only sent to Deezer. DRM-protected SoundCloud tracks are skipped. Only use it for tracks you are allowed to download.
 

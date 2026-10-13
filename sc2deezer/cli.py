@@ -80,6 +80,8 @@ def main(argv=None):
         description=f"{APP_NAME} : copie une playlist SoundCloud dans tes MP3 perso Deezer, avec les covers. "
                     "Sans argument, ouvre la fenêtre.")
     parser.add_argument("url", nargs="?", help="lien SoundCloud : une playlist ou un seul son")
+    parser.add_argument("--vers", "--to", dest="dest", choices=["deezer", "apple"], default="deezer",
+                        help="où envoyer les sons : deezer (par défaut) ou apple (Apple Music / iTunes)")
     parser.add_argument("--profil", "--profile", dest="profile",
                         help="profil Deezer (offre Famille) où ajouter les sons, par son nom")
     parser.add_argument("--nom", "--name", dest="name", help="nom de la playlist sur Deezer (par défaut : celui de SoundCloud)")
@@ -109,6 +111,9 @@ def main(argv=None):
     if not args.url:
         parser.error("indique le lien SoundCloud (une playlist ou un seul son)")
 
+    if args.dest == "apple":
+        return run_apple(args)
+
     settings = config.load()
     arl = settings["arl"] or ask_arl()
     try:
@@ -137,4 +142,30 @@ def main(argv=None):
         print(f"{len(result.failures)} élément(s) non copié(s) (relance pour réessayer) :")
         for what, why in result.failures:
             print(f"  ✗ {what} : {why}")
+    return 0
+
+
+def run_apple(args):
+    from . import applemusic
+    mode = applemusic.detect()
+    print("Apple Music :", "import automatique dans iTunes" if mode == "itunes"
+          else "préparation d'un dossier à glisser dans l'appli Apple Music")
+    try:
+        result = transfer.run_apple(args.url, name=args.name, out_root=args.output, emit=emit, mode=mode)
+    except KeyboardInterrupt:
+        print("\nArrêté. Relance la même commande pour reprendre là où tu t'es arrêté.")
+        return 130
+    except Exception as exc:
+        print(f"Erreur : {transfer.friendly_error(exc)}")
+        return 1
+    print()
+    if mode == "itunes":
+        where = "ta bibliothèque iTunes" if result.kind == "track" else f"la playlist « {result.title} » d'iTunes"
+        print(f"✓ Terminé : {result.count} son(s) dans {where}")
+    elif result.to_import:
+        print(f"✓ Prêt : glisse ceci dans l'appli Apple Music, puis laisse-le à cet endroit :\n  {result.to_import}")
+    else:
+        print("✓ Rien de nouveau : tout a déjà été préparé pour Apple Music.")
+    for what, why in result.failures:
+        print(f"  ✗ {what} : {why}")
     return 0

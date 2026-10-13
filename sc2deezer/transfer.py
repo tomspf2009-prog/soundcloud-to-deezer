@@ -7,17 +7,20 @@ re-télécharger ni ré-envoyer.
 import hashlib
 import json
 import re
+import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import requests
 
-from . import soundcloud
+from . import applemusic, soundcloud
 from .config import default_output_dir
 from .deezer import Deezer
 from .soundcloud import PlaylistError
 
 SINGLES_FOLDER = "Sons seuls"
+APPLE_FOLDER = "Pour Apple Music"
 
 
 class Cancelled(Exception):
@@ -34,6 +37,13 @@ class Result:
     kind: str = "playlist"  # ou "track"
     liked: int = 0
     failures: list = field(default_factory=list)
+    destination: str = "deezer"  # « deezer », « itunes » ou « folder » (dossier à glisser dans Apple Music)
+    to_import: Path = None  # mode « folder » : le dossier (ou le MP3) à glisser dans Apple Music
+
+
+def file_name(text, max_len=120):
+    """Nom de fichier lisible et valide sous Windows."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .")[:max_len] or "son"
 
 
 def slugify(text, max_len=60):
@@ -58,13 +68,14 @@ def friendly_error(exc):
     return re.sub(r"^ERROR: (\[[^\]]+\] )?([\w-]+: )?", "", text)
 
 
-def load_state(path, legacy_owner):
-    """MP3 téléchargés (communs) + ce qui a été envoyé, profil Deezer par profil."""
+def load_state(path, legacy_owner=None):
+    """MP3 téléchargés (communs) + ce qui a été envoyé : Deezer profil par profil, iTunes."""
     state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     state.setdefault("tracks", {})
     by_profile = state.setdefault("deezer", {})
     # Ancien format (un seul compte) : tout avait été envoyé sur le profil principal.
-    if "deezer_playlist_id" in state or any("sng_id" in t for t in state["tracks"].values()):
+    legacy = "deezer_playlist_id" in state or any("sng_id" in t for t in state["tracks"].values())
+    if legacy and legacy_owner is not None:
         legacy = by_profile.setdefault(str(legacy_owner), {})
         legacy.setdefault("songs", {})
         legacy["playlist_id"] = state.pop("deezer_playlist_id", None)
@@ -75,6 +86,18 @@ def load_state(path, legacy_owner):
             if song:
                 legacy["songs"][sc_id] = song
     return state
+
+
+def ensure_mp3(folder, state, sc_id, source_url, ffmpeg, save):
+    """Le MP3 tagué (titre, artiste, cover) du son, téléchargé seulement s'il manque. Renvoie son suivi."""
+    track = state["tracks"].setdefault(sc_id, {})
+    if not track.get("file") or not (folder / track["file"]).exists():
+        info, path = soundcloud.download_track(source_url, folder, ffmpeg)
+        title, artist, artwork = soundcloud.track_metadata(info)
+        soundcloud.tag_mp3(path, title, artist, soundcloud.best_artwork(artwork))
+        track.update(file=path.name, title=title, artist=artist)
+        save()
+    return track
 
 
 def known_uploads(root, user_id):
@@ -131,12 +154,7 @@ class Job:
             track.setdefault("artist", known[2])
             self.save()
             return f"{track['artist']} - {track['title']}", "already"
-        if not track.get("file") or not (self.folder / track["file"]).exists():
-            info, path = soundcloud.download_track(source_url, self.folder, self.ffmpeg)
-            title, artist, artwork = soundcloud.track_metadata(info)
-            soundcloud.tag_mp3(path, title, artist, soundcloud.best_artwork(artwork))
-            track.update(file=path.name, title=title, artist=artist)
-            self.save()
+        ensure_mp3(self.folder, self.state, sc_id, source_url, self.ffmpeg, self.save)
         label = f"{track['artist']} - {track['title']}"
         reused = self.existing.get(file_md5(self.folder / track["file"]))
         song["sng_id"] = reused or self.dz.upload_mp3(self.folder / track["file"])
@@ -272,4 +290,123 @@ def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
         kind="playlist",
         liked=liked,
         failures=failures,
+    )
+
+
+def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None):
+    """Copie une playlist ou un son vers Apple Music.
+
+    mode « itunes » : import automatique dans iTunes, playlist comprise.
+    mode « folder » : prépare un dossier (ou un MP3) à glisser dans l'appli Apple Music. Seuls les sons
+    jamais livrés y sont mis, et rien n'est effacé ensuite : Apple Music lit les sons à cet endroit.
+    """
+    emit = emit or (lambda kind, **data: None)
+
+    def check_stop():
+        if stop is not None and stop.is_set():
+            raise Cancelled()
+
+    mode = mode or applemusic.detect()
+    url = soundcloud.normalize_url(url)
+    emit("status", text="Lecture du lien SoundCloud…")
+    info = soundcloud.fetch(url)
+    single = info.get("_type") != "playlist"
+    entries = [{"id": info["id"], "url": info.get("webpage_url") or url}] if single else info["entries"]
+    sc_title = info.get("title") or "SoundCloud"
+    title = sc_title if single else (name or sc_title)
+    root = Path(out_root or default_output_dir())
+    folder = root / (SINGLES_FOLDER if single else f"{slugify(sc_title)}-{info['id']}")
+    folder.mkdir(parents=True, exist_ok=True)
+    state_path = folder / "state.json"
+    state = load_state(state_path)
+
+    def save():
+        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    itunes = playlist = None
+    in_playlist = set()
+    mine = state.setdefault("itunes" if mode == "itunes" else "apple_folder", {})
+    songs = mine.setdefault("songs", {})
+    if mode == "itunes":
+        emit("status", text="Ouverture d'iTunes…")
+        itunes = applemusic.ITunes()
+        if not single:
+            playlist = itunes.playlist(mine.get("playlist"))
+            if playlist is None:
+                emit("status", text="Création de la playlist dans iTunes…")
+                playlist = itunes.create_playlist(title)
+                mine["playlist"] = itunes.ids(playlist)
+                save()
+            in_playlist = itunes.playlist_track_ids(playlist)
+
+    total = len(entries)
+    emit("playlist", title=sc_title, total=total, folder=folder, source="track" if single else "playlist")
+    ffmpeg = soundcloud.ffmpeg_location()
+    failures, ready, fresh = [], [], []
+    for n, entry in enumerate(entries, 1):
+        check_stop()
+        sc_id = str(entry.get("id"))
+        emit("progress", index=n, total=total)
+        try:
+            track = ensure_mp3(folder, state, sc_id, entry["url"], ffmpeg, save)
+            label = f"{track['artist']} - {track['title']}"
+            status = "already" if songs.get(sc_id) else "ok"
+            if itunes:
+                existing = itunes.track(songs.get(sc_id))
+                if existing is None:
+                    added = itunes.add_file(folder / track["file"], playlist)
+                    songs[sc_id] = itunes.ids(added)
+                    in_playlist.add(tuple(songs[sc_id]))
+                    status = "ok"
+                    save()
+                elif playlist is not None and tuple(songs[sc_id]) not in in_playlist:
+                    itunes.add_track(playlist, existing)
+                    in_playlist.add(tuple(songs[sc_id]))
+            elif not songs.get(sc_id):
+                fresh.append((n, sc_id, track))
+            ready.append(track)
+            emit("track", index=n, total=total, text=label, status=status)
+        except Exception as exc:  # un son en échec ne bloque pas les autres
+            what = state["tracks"].get(sc_id, {}).get("title") or entry.get("title") or entry.get("url") or sc_id
+            why = friendly_error(exc)
+            failures.append((what, why))
+            emit("track", index=n, total=total, text=what, status="failed", detail=why)
+
+    check_stop()
+    if not ready:
+        raise PlaylistError("Aucun son n'a pu être préparé.")
+
+    to_import = None
+    if mode != "itunes" and fresh:
+        emit("status", text="Préparation du dossier pour Apple Music…")
+        base = root / APPLE_FOLDER / (SINGLES_FOLDER if single else file_name(title))
+        if single:
+            to_import = base
+        else:
+            batches = [p for p in base.glob("*") if p.is_dir()] if base.exists() else []
+            to_import = base / f"{len(batches) + 1} - ajout du {datetime.now():%d-%m-%Y %Hh%M}"
+        to_import.mkdir(parents=True, exist_ok=True)
+        for n, sc_id, track in fresh:
+            label = f"{track['artist']} - {track['title']}"
+            target = to_import / f"{file_name(label) if single else f'{n:03d} - {file_name(label)}'}.mp3"
+            shutil.copy2(folder / track["file"], target)
+            songs[sc_id] = target.name
+        if not single:
+            applemusic.write_m3u8(to_import / f"{file_name(title)}.m3u8",
+                                  [{**t, "file": f"{n:03d} - {file_name(t['artist'] + ' - ' + t['title'])}.mp3"}
+                                   for n, _, t in fresh])
+        else:
+            to_import = to_import / songs[fresh[0][1]]
+        save()
+
+    return Result(
+        url="",
+        title=f"{ready[0]['artist']} - {ready[0]['title']}" if single else title,
+        profile="iTunes" if itunes else "Apple Music",
+        count=len(ready),
+        folder=folder,
+        kind="track" if single else "playlist",
+        failures=failures,
+        destination=mode,
+        to_import=to_import,
     )

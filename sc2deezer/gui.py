@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.font import nametofont
 
-from . import APP_NAME, REPO_URL, __version__, config, soundcloud, transfer
+from . import APP_NAME, REPO_URL, __version__, applemusic, config, soundcloud, transfer
 from .deezer import Deezer
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -120,6 +120,7 @@ class App:
             self._check_key(settings["arl"], silent=True)
         else:
             self._show_key_form()
+        self._on_dest_change(save=False)
         self._fit_to_screen(center=True)
 
     # ------------------------------------------------------------------ interface
@@ -143,15 +144,36 @@ class App:
         main.columnconfigure(0, weight=1)
 
         ttk.Label(main, text="SoundCloud  →  Deezer", style="Title.TLabel").grid(sticky="w")
-        ttk.Label(main, text="Copie une playlist SoundCloud dans tes MP3 Deezer, avec les covers d'origine.",
+        ttk.Label(main, text="Copie tes sons et playlists SoundCloud dans Deezer ou Apple Music, avec les covers d'origine.",
                   style="Sub.TLabel").grid(sticky="w", pady=(0, 8))
 
         # 1. Compte Deezer
-        account = ttk.LabelFrame(main, text=" 1. Ton compte Deezer ", style="Section.TLabelframe", padding=(12, 6, 12, 10))
+        account = ttk.LabelFrame(main, text=" 1. Où envoyer tes sons ? ", style="Section.TLabelframe", padding=(12, 6, 12, 10))
         account.grid(sticky="ew", pady=(0, 8))
         account.columnconfigure(0, weight=1)
 
-        self.key_form = ttk.Frame(account)
+        self.dest_var = tk.StringVar(value=config.load().get("destination") or "deezer")
+        choices = ttk.Frame(account)
+        choices.pack(fill="x", pady=(0, 6))
+        for value, label in (("deezer", "Deezer"), ("apple", "Apple Music")):
+            ttk.Radiobutton(choices, text=label, value=value, variable=self.dest_var,
+                            command=self._on_dest_change).pack(side="left", padx=(0, 24))
+
+        self.apple_mode = applemusic.detect()
+        self.apple_area = ttk.Frame(account)
+        if self.apple_mode == "itunes":
+            apple_text = "✓ iTunes est installé : les sons et la playlist y seront ajoutés automatiquement."
+        else:
+            apple_text = ("Le programme prépare un dossier de MP3, avec leurs covers, que tu n'auras "
+                          "plus qu'à glisser dans l'appli Apple Music.")
+        ttk.Label(self.apple_area, text=apple_text, wraplength=520,
+                  style="Ok.TLabel" if self.apple_mode == "itunes" else "TLabel").pack(anchor="w")
+        ttk.Label(self.apple_area, style="Hint.TLabel", wraplength=520, text=(
+            "Pour les retrouver sur ton iPhone : abonnement Apple Music, avec « Synchroniser la "
+            "bibliothèque » activé.")).pack(anchor="w", pady=(4, 0))
+
+        self.deezer_area = ttk.Frame(account)
+        self.key_form = ttk.Frame(self.deezer_area)
         self.key_form.columnconfigure(0, weight=1)
         ttk.Label(self.key_form, text="Colle ta clé Deezer (le cookie « arl ») :").grid(row=0, column=0, columnspan=2, sticky="w")
         self.key_entry = ttk.Entry(self.key_form, show="•")
@@ -168,7 +190,7 @@ class App:
                   style="Hint.TLabel").pack(side="left")
         self.key_message = ttk.Label(self.key_form, text="", style="Err.TLabel", wraplength=520)
 
-        self.connected = ttk.Frame(account)
+        self.connected = ttk.Frame(self.deezer_area)
         self.connected.columnconfigure(1, weight=1)
         self.connected_label = ttk.Label(self.connected, text="", style="Ok.TLabel")
         self.connected_label.grid(row=0, column=0, columnspan=2, sticky="w")
@@ -238,8 +260,7 @@ class App:
         self.log.tag_configure("info", foreground=GREY)
 
         self.done_buttons = ttk.Frame(progress)
-        self.open_button = ttk.Button(self.done_buttons, text="Ouvrir la playlist sur Deezer",
-                                      command=lambda: webbrowser.open(self.result.url))
+        self.open_button = ttk.Button(self.done_buttons, text="Ouvrir la playlist sur Deezer", command=self._open_result)
         self.open_button.pack(side="left")
         ttk.Button(self.done_buttons, text="Ouvrir le dossier des MP3",
                    command=lambda: open_path(self.result.folder)).pack(side="left", padx=8)
@@ -267,16 +288,45 @@ class App:
         if running:
             self.go_button.configure(text="Arrêter", bg=GREY, activebackground="#4A4D51", state="normal")
         else:
-            ready = bool(self.arl and self.profile_id)
-            self.go_button.configure(text="Ajouter à Deezer" if self.kind == "track" else "Copier vers Deezer",
+            target = "Apple Music" if self.apple else "Deezer"
+            ready = self.apple or bool(self.arl and self.profile_id)
+            self.go_button.configure(text=f"Ajouter à {target}" if self.kind == "track" else f"Copier vers {target}",
                                      bg=PURPLE if ready else "#CDB8F7", activebackground=PURPLE_DARK,
                                      state="normal" if ready else "disabled")
         single = self.kind == "track"
         self.url_entry.configure(state="disabled" if running else "normal")
         self.like_check.configure(state="disabled" if running else "normal")
-        for widget in (self.name_entry, self.public_check):  # sans objet pour un son seul
-            widget.configure(state="disabled" if running or single else "normal")
+        self.name_entry.configure(state="disabled" if running or single else "normal")
+        # Playlist publique : Deezer uniquement, et sans objet pour un son seul.
+        self.public_check.configure(state="disabled" if running or single or self.apple else "normal")
         self.profile_box.configure(state="disabled" if running else "readonly")
+
+    @property
+    def apple(self):
+        return self.dest_var.get() == "apple"
+
+    def _on_dest_change(self, save=True):
+        if save:
+            config.save(destination=self.dest_var.get())
+        if self.apple:
+            self.deezer_area.pack_forget()
+            self.apple_area.pack(fill="x")
+            self.like_check.grid_remove()  # les Coups de cœur sont propres à Deezer
+        else:
+            self.apple_area.pack_forget()
+            self.deezer_area.pack(fill="x")
+            self.like_check.grid()
+        self._refresh_go()
+        self._fit_to_screen()
+
+    def _open_result(self):
+        result = self.result
+        if result.destination == "deezer":
+            webbrowser.open(result.url)
+        elif result.to_import and result.to_import.is_file() and sys.platform == "win32":
+            subprocess.run(["explorer", "/select,", str(result.to_import)], check=False)
+        else:
+            open_path(result.to_import or result.folder)
 
     def _on_url_change(self):
         kind = soundcloud.guess_kind(self.url_entry.get())
@@ -418,15 +468,18 @@ class App:
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
         self.worker = threading.Thread(target=self._transfer_worker, daemon=True, args=(
-            url, self.name_entry.get().strip() or None, self.public_var.get(), self.like_var.get()))
+            url, self.name_entry.get().strip() or None, self.public_var.get(), self.like_var.get(), self.apple))
         self.worker.start()
         self._refresh_go()
 
-    def _transfer_worker(self, url, name, public, like):
+    def _transfer_worker(self, url, name, public, like, apple):
         emit = lambda kind, **data: self.events.put((kind, data))  # noqa: E731
         try:
-            result = transfer.run(url, self.arl, profile_id=self.profile_id, name=name, public=public,
-                                  like=like, emit=emit, stop=self.stop)
+            if apple:
+                result = transfer.run_apple(url, name=name, emit=emit, stop=self.stop, mode=self.apple_mode)
+            else:
+                result = transfer.run(url, self.arl, profile_id=self.profile_id, name=name, public=public,
+                                      like=like, emit=emit, stop=self.stop)
             emit("done", result=result)
         except transfer.Cancelled:
             emit("cancelled")
@@ -447,22 +500,42 @@ class App:
             self._write(f"Playlist « {title} » : {total} sons. MP3 enregistrés dans {folder}")
 
     def on_progress(self, index, total):
-        self.status.configure(text=f"Son {index} sur {total} : téléchargement et envoi sur Deezer…")
+        target = "préparation pour Apple Music" if self.apple else "envoi sur Deezer"
+        self.status.configure(text=f"Son {index} sur {total} : téléchargement et {target}…")
 
     def on_track(self, index, total, text, status, detail=None):
         self.bar.configure(value=index)
         if status == "ok":
             self._write(f"✓ {text}", "ok")
         elif status == "already":
-            self._write(f"✓ {text} (déjà sur Deezer)", "ok")
+            self._write(f"✓ {text} (déjà fait)", "ok")
         else:
             self._write(f"✗ {text} : {detail}", "failed")
+
+    def _apple_summary(self, result):
+        title = displayable(result.title)
+        self.open_button.configure(text="Ouvrir le dossier à glisser")
+        if result.destination == "itunes":
+            self.open_button.pack_forget()
+            if result.kind == "track":
+                return f"C'est fait ! « {title} » est dans ta bibliothèque iTunes."
+            return f"Terminé ! {result.count} sons dans la playlist « {title} » d'iTunes."
+        if not result.to_import:
+            self.open_button.pack_forget()
+            return "Rien de nouveau : tout a déjà été préparé pour Apple Music."
+        self._open_result()
+        what = "le MP3 sélectionné" if result.kind == "track" else "le dossier qui vient de s'ouvrir"
+        return (f"C'est prêt ! Glisse {what} dans l'appli Apple Music, puis laisse-le à cet endroit : "
+                "Apple Music y lit les sons.")
 
     def on_done(self, result):
         self.result = result
         self.bar.configure(value=self.bar["maximum"])
         profile = displayable(result.profile)
-        if result.kind == "track":
+        self.open_button.pack(side="left", before=self.done_buttons.winfo_children()[-1])
+        if result.destination != "deezer":
+            summary = self._apple_summary(result)
+        elif result.kind == "track":
             where = "tes MP3 et tes Coups de cœur" if self.like_var.get() else "tes MP3"
             summary = f"C'est fait ! « {displayable(result.title)} » est dans {where} (profil {profile})."
             self.open_button.configure(text="Ouvrir mes Coups de cœur" if self.like_var.get() else "Ouvrir mes MP3")
