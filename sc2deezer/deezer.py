@@ -20,6 +20,22 @@ class DeezerError(Exception):
     pass
 
 
+# Appels qu'on ne relance pas après une coupure réseau : ils ont pu aboutir côté Deezer,
+# et les refaire créerait un doublon (une 2e playlist).
+NOT_RETRYABLE = {"playlist.create"}
+
+
+def with_retries(send, retryable=True, attempts=3):
+    """Refait une requête après une coupure réseau passagère (Deezer en coupe parfois)."""
+    for attempt in range(attempts):
+        try:
+            return send()
+        except (requests.ConnectionError, requests.Timeout):
+            if not retryable or attempt == attempts - 1:
+                raise
+            time.sleep(2 * (attempt + 1))
+
+
 class Deezer:
     def __init__(self, arl, profile_id=None):
         """`profile_id` : profil de l'offre Famille à utiliser (par défaut, le profil principal)."""
@@ -72,10 +88,10 @@ class Deezer:
             raise DeezerError("Impossible de passer sur ce profil Deezer.")
 
     def call(self, method, params=None, retry=True):
-        r = self.s.post(GW_URL, params={
+        r = with_retries(lambda: self.s.post(GW_URL, params={
             "method": method, "input": "3", "api_version": "1.0",
             "api_token": self.api_token, "cid": random.randint(0, 10**9),
-        }, json=params or {}, timeout=60)
+        }, json=params or {}, timeout=60), retryable=method not in NOT_RETRYABLE)
         r.raise_for_status()
         data = r.json()
         error = data.get("error")
@@ -91,8 +107,12 @@ class Deezer:
         name = re.sub(r"[^\w.\-]", "_", path.name)
         params = {"sid": self.sid, "id": element_id, "resize": 1, "directory": directory,
                   "type": kind, "referer": self.referer, "file": name}
-        with open(path, "rb") as f:
-            r = self.s.post(UPLOAD_URL, params=params, files={"file": (name, f, mime)}, timeout=600)
+
+        def send():
+            with open(path, "rb") as f:
+                return self.s.post(UPLOAD_URL, params=params, files={"file": (name, f, mime)}, timeout=600)
+        # Une image remplace la précédente : on peut la renvoyer. Un MP3 renvoyé ferait un doublon.
+        r = with_retries(send, retryable=kind == "picture")
         r.raise_for_status()
         data = r.json()
         if data.get("error"):

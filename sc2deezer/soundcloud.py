@@ -78,8 +78,9 @@ def fetch(url):
     return info
 
 
-def playlist_cover_url(url):
-    """yt-dlp ne donne pas l'artwork d'une playlist : on le lit dans la page (og:image)."""
+def page_image_url(url):
+    """Image principale d'une page SoundCloud (og:image) : cover d'une playlist, photo d'un artiste.
+    yt-dlp ne les donne pas, on les lit dans la page."""
     try:
         html = requests.get(url, headers={"User-Agent": UA}, timeout=30).text
     except requests.RequestException:
@@ -110,13 +111,16 @@ def _fetch_image(url, max_bytes=8 * 1024 * 1024):
 def best_artwork(url, prefer_original=False):
     """Télécharge un artwork SoundCloud ; renvoie (octets, type MIME) ou None.
 
-    artworks-xxx-t500x500.jpg existe aussi en -original (pleine résolution).
+    Une image SoundCloud existe en plusieurs tailles (-t500x500, -crop, -original…) ; certaines
+    peuvent manquer, alors on essaie les autres plutôt que d'abandonner.
     """
     m = re.match(r"(.*-)(?:large|t\d+x\d+|crop|original)(\.\w+)$", url or "")
     if m:
         base, ext = m.groups()
-        sized = f"{base}t500x500{ext}"
-        candidates = [f"{base}original{ext}", f"{base}original.png", sized] if prefer_original else [sized]
+        sizes = [f"t500x500{ext}", f"crop{ext}", f"original{ext}", "original.png", f"t300x300{ext}", f"large{ext}"]
+        if prefer_original:
+            sizes = [f"original{ext}", "original.png", *sizes]
+        candidates = list(dict.fromkeys(base + size for size in sizes))
     else:
         candidates = [url] if url else []
     for candidate in candidates:
@@ -124,6 +128,18 @@ def best_artwork(url, prefer_original=False):
         if img:
             return img
     return None
+
+
+def track_cover(info, fallback=None):
+    """Cover d'un son, comme SoundCloud l'affiche : son image, sinon la photo de l'artiste,
+    sinon `fallback()` (la cover de la playlist, par exemple). Renvoie (octets, type MIME) ou None."""
+    thumbs = {t.get("id"): t.get("url") for t in info.get("thumbnails") or []}
+    img = best_artwork(thumbs.get("t500x500") or info.get("thumbnail"))
+    if not img and info.get("uploader_url"):
+        img = best_artwork(page_image_url(info["uploader_url"]))
+    if not img and fallback:
+        img = fallback()
+    return img
 
 
 def ffmpeg_location():

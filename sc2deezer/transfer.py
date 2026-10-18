@@ -88,16 +88,29 @@ def load_state(path, legacy_owner=None):
     return state
 
 
-def ensure_mp3(folder, state, sc_id, source_url, ffmpeg, save):
-    """Le MP3 tagué (titre, artiste, cover) du son, téléchargé seulement s'il manque. Renvoie son suivi."""
+def ensure_mp3(folder, state, sc_id, source_url, ffmpeg, save, fallback_cover=None):
+    """Le MP3 tagué (titre, artiste, cover) du son, téléchargé seulement s'il manque. Renvoie son suivi.
+
+    `fallback_cover()` : cover à utiliser si ni le son ni l'artiste n'en ont (la cover de la playlist)."""
     track = state["tracks"].setdefault(sc_id, {})
     if not track.get("file") or not (folder / track["file"]).exists():
         info, path = soundcloud.download_track(source_url, folder, ffmpeg)
-        title, artist, artwork = soundcloud.track_metadata(info)
-        soundcloud.tag_mp3(path, title, artist, soundcloud.best_artwork(artwork))
+        title, artist, _ = soundcloud.track_metadata(info)
+        soundcloud.tag_mp3(path, title, artist, soundcloud.track_cover(info, fallback_cover))
         track.update(file=path.name, title=title, artist=artist)
         save()
     return track
+
+
+def playlist_cover_once(url):
+    """La cover de la playlist, téléchargée au premier besoin seulement (secours pour les sons sans image)."""
+    cache = []
+
+    def get():
+        if not cache:
+            cache.append(soundcloud.best_artwork(soundcloud.page_image_url(url)))
+        return cache[0]
+    return get
 
 
 def known_uploads(root, user_id):
@@ -130,6 +143,7 @@ class Job:
         self.mine = self.state["deezer"].setdefault(str(dz.user_id), {})
         self.songs = self.mine.setdefault("songs", {})
         self.ffmpeg = soundcloud.ffmpeg_location()
+        self.fallback_cover = None  # pour une playlist : sa cover, si un son n'a aucune image
         # MP3 déjà dans « Mes MP3 » (copie interrompue, suivi effacé…) : Deezer garde l'empreinte MD5
         # du fichier envoyé, ce qui permet de les reconnaître à l'identique et d'éviter les doublons.
         self.existing = {str(s.get("MD5_ORIGIN") or "").split(".")[0]: int(s["SNG_ID"]) for s in dz.personal_songs()}
@@ -154,7 +168,7 @@ class Job:
             track.setdefault("artist", known[2])
             self.save()
             return f"{track['artist']} - {track['title']}", "already"
-        ensure_mp3(self.folder, self.state, sc_id, source_url, self.ffmpeg, self.save)
+        ensure_mp3(self.folder, self.state, sc_id, source_url, self.ffmpeg, self.save, self.fallback_cover)
         label = f"{track['artist']} - {track['title']}"
         reused = self.existing.get(file_md5(self.folder / track["file"]))
         song["sng_id"] = reused or self.dz.upload_mp3(self.folder / track["file"])
@@ -218,6 +232,7 @@ def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
     total = len(entries)
     sc_title = pl.get("title") or "SoundCloud"
     job = Job(dz, root / f"{slugify(sc_title)}-{pl['id']}")
+    job.fallback_cover = playlist_cover_once(url)
     emit("playlist", title=sc_title, total=total, folder=job.folder, source="playlist")
     failures = []
 
@@ -266,7 +281,7 @@ def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
     # 3. Cover de la playlist = artwork SoundCloud d'origine
     if not mine.get("cover_done"):
         emit("status", text="Ajout de la cover de la playlist…")
-        cover = soundcloud.best_artwork(soundcloud.playlist_cover_url(url), prefer_original=True)
+        cover = soundcloud.best_artwork(soundcloud.page_image_url(url), prefer_original=True)
         if cover:
             data, mime = cover
             cover_path = job.folder / ("cover.png" if mime == "image/png" else "cover.jpg")
@@ -342,13 +357,14 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
     total = len(entries)
     emit("playlist", title=sc_title, total=total, folder=folder, source="track" if single else "playlist")
     ffmpeg = soundcloud.ffmpeg_location()
+    fallback_cover = None if single else playlist_cover_once(url)
     failures, ready, fresh = [], [], []
     for n, entry in enumerate(entries, 1):
         check_stop()
         sc_id = str(entry.get("id"))
         emit("progress", index=n, total=total)
         try:
-            track = ensure_mp3(folder, state, sc_id, entry["url"], ffmpeg, save)
+            track = ensure_mp3(folder, state, sc_id, entry["url"], ffmpeg, save, fallback_cover)
             label = f"{track['artist']} - {track['title']}"
             status = "already" if songs.get(sc_id) else "ok"
             if itunes:
@@ -396,7 +412,7 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
                                   [{**t, "file": f"{n:03d} - {file_name(t['artist'] + ' - ' + t['title'])}.mp3"}
                                    for n, _, t in fresh])
             if not batches:  # 1re fois : la cover SoundCloud, à mettre comme illustration de la playlist
-                cover = soundcloud.best_artwork(soundcloud.playlist_cover_url(url), prefer_original=True)
+                cover = soundcloud.best_artwork(soundcloud.page_image_url(url), prefer_original=True)
                 if cover:
                     data, mime = cover
                     (to_import / f"cover de la playlist.{'png' if mime == 'image/png' else 'jpg'}").write_bytes(data)
