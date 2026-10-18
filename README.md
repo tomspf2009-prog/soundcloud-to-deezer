@@ -178,6 +178,9 @@ Dans ton dossier `Musique\SoundCloud vers Deezer` (les sons ajoutés un par un s
 **Deezer : ça marche avec un compte gratuit ?**
 Oui. Deezer accepte jusqu'à 2 000 MP3 perso, de 200 Mo maximum chacun.
 
+**Deezer : des covers manquent sur mon téléphone, mais pas sur ordinateur.**
+Les images sont bien sur ton compte : c'est l'appli du téléphone qui ne les affiche plus (ça touche aussi des albums du catalogue). Vider le « Smart Cache » ne suffit pas toujours. Ce qui marche : **supprimer l'appli Deezer** (appui long sur l'icône > Supprimer l'app, et pas « Décharger »), la réinstaller, puis te reconnecter. Les sons téléchargés pour l'écoute hors ligne seront à retélécharger.
+
 **Deezer : j'ajoute un son seul qui est déjà dans une playlist copiée.**
 Pas de doublon : le programme le reconnaît, ne le retélécharge pas, et se contente de le liker si la case est cochée.
 
