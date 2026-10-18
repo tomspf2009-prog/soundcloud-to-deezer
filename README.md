@@ -64,6 +64,7 @@ Sur SoundCloud, ouvre la playlist (ou le son) et copie son lien (barre d'adresse
 
 - Pour **un seul son**, la case « Ajouter à mes Coups de cœur » se coche toute seule : décoche-la si tu veux juste l'ajouter à tes MP3.
 - Pour **une playlist**, coche cette case si tu veux aussi liker tous ses sons.
+- **Cover (facultatif)** : clique sur **Choisir une image…** pour mettre ta propre cover à la playlist ou au son, à la place de celle de SoundCloud. N'importe quelle image marche (JPG, PNG…) : elle est recadrée en carré automatiquement.
 
 Compte quelques secondes par son. Tu peux fermer le programme à tout moment : relance le même lien plus tard, la copie reprendra là où elle s'était arrêtée.
 
@@ -131,6 +132,8 @@ En haut de la fenêtre, le programme te dit ce qu'il a trouvé sur ton PC :
 
 Sur SoundCloud, copie le lien de la playlist (ou du son), colle-le dans le programme, donne un nom à la playlist si tu veux, puis clique sur le gros bouton.
 
+**Cover (facultatif)** : clique sur **Choisir une image…** pour mettre ta propre cover à la place de celle de SoundCloud. Pour un son seul, ça marche partout. Pour une playlist, ça marche avec l'appli Apple Music (l'image est fournie dans le dossier), mais pas avec iTunes, qui ne permet pas à un programme de changer l'image d'une playlist.
+
 ### 4A. Avec iTunes : c'est fini
 
 iTunes s'ouvre et les sons y arrivent un par un, avec leur cover, dans une playlist au nom de la playlist SoundCloud (rubrique **Playlists** à gauche). Un son seul va directement dans ta bibliothèque.
@@ -178,6 +181,14 @@ Dans ton dossier `Musique\SoundCloud vers Deezer` (les sons ajoutés un par un s
 **Deezer : ça marche avec un compte gratuit ?**
 Oui. Deezer accepte jusqu'à 2 000 MP3 perso, de 200 Mo maximum chacun.
 
+**Je veux mettre ma propre cover.**
+Clique sur **Choisir une image…** avant de lancer la copie. Tu peux aussi changer plus tard la cover d'une playlist ou d'un son déjà copié : relance le même lien avec une autre image.
+- Deezer ne permet pas de modifier l'image d'un MP3 déjà envoyé : pour un son seul, le programme le renvoie avec la nouvelle cover, le garde dans tes Coups de cœur, puis retire l'ancien. Il ne le fait pas si ce son fait aussi partie d'une playlist que tu as copiée, pour ne pas l'en retirer.
+- Les sons d'une playlist gardent leur cover SoundCloud : la cover perso s'applique à la playlist elle-même.
+
+**Un son n'a pas de cover sur SoundCloud.**
+Le programme prend alors la photo de l'artiste, ou à défaut la cover de la playlist, comme SoundCloud le fait.
+
 **Deezer : des covers manquent sur mon téléphone, mais pas sur ordinateur.**
 Les images sont bien sur ton compte : c'est l'appli du téléphone qui ne les affiche plus (ça touche aussi des albums du catalogue). Vider le « Smart Cache » ne suffit pas toujours. Ce qui marche : **supprimer l'appli Deezer** (appui long sur l'icône > Supprimer l'app, et pas « Décharger »), la réinstaller, puis te reconnecter. Les sons téléchargés pour l'écoute hors ligne seront à retélécharger.
 
@@ -209,7 +220,7 @@ sc2deezer                     # ouvre la fenêtre (choix Deezer / Apple Music)
 sc2deezer <lien SoundCloud>   # version ligne de commande
 ```
 
-Options de la ligne de commande : `--vers apple` (Apple Music au lieu de Deezer), `--profil <prénom>` (offre Famille), `--coeur` / `--sans-coeur` (Coups de cœur ; automatique pour un son seul), `--nom`, `--publique`, `--dossier`, `--changer-cle`, `--oublier-cle`. La clé peut aussi être fournie par la variable d'environnement `DEEZER_ARL`.
+Options de la ligne de commande : `--vers apple` (Apple Music au lieu de Deezer), `--profil <prénom>` (offre Famille), `--coeur` / `--sans-coeur` (Coups de cœur ; automatique pour un son seul), `--cover <image>` (cover perso), `--nom`, `--publique`, `--dossier`, `--changer-cle`, `--oublier-cle`. La clé peut aussi être fournie par la variable d'environnement `DEEZER_ARL`.
 
 Comment ça marche :
 
@@ -229,7 +240,7 @@ La vidéo de présentation et l'animation ci-dessus sont, elles aussi, faites en
 - **Deezer** ([download](https://github.com/tomspf2009-prog/soundcloud-to-deezer/releases/latest/download/SoundCloud-vers-Deezer.exe)): tracks go to your personal MP3s ("My MP3s") and a private playlist with the original SoundCloud cover; single tracks can be added to your Favourite tracks. Works with Free, Premium and Family plans. It needs your Deezer `arl` cookie (F12 > Application > Cookies > `arl`), stored only on your computer and only sent to Deezer.
 - **Apple Music** ([download](https://github.com/tomspf2009-prog/soundcloud-to-deezer/releases/latest/download/SoundCloud-vers-Apple-Music.exe)): with iTunes, tracks and the playlist are imported automatically; with the Apple Music app, a ready-to-import folder is prepared. An Apple Music subscription with Sync Library is needed to get them on your iPhone.
 
-DRM-protected SoundCloud tracks are skipped. Only use it for tracks you are allowed to download.
+You can also pick your own cover image for a playlist or a single track (it is cropped to a square automatically). DRM-protected SoundCloud tracks are skipped. Only use it for tracks you are allowed to download.
 
 ## Licence
 

@@ -16,6 +16,7 @@ dependencies = [
     "mutagen",
     "requests",
     "truststore",
+    "pillow",  # covers personnalisées
     "pywin32; sys_platform == 'win32'",  # piloter iTunes (Apple Music)
 ]
 

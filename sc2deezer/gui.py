@@ -7,10 +7,10 @@ import threading
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from tkinter.font import nametofont
 
-from . import APP_NAME, REPO_URL, __version__, applemusic, config, soundcloud, transfer
+from . import APP_NAME, REPO_URL, __version__, applemusic, config, covers, soundcloud, transfer
 from .deezer import Deezer
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -231,15 +231,25 @@ class App:
         self.name_entry = HintEntry(source, "facultatif : sinon le même que sur SoundCloud")
         self.name_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6), padx=(8, 0))
         add_paste_menu(self.name_entry)
+        ttk.Label(source, text="Cover :").grid(row=2, column=0, sticky="w")
+        cover_row = ttk.Frame(source)
+        cover_row.grid(row=2, column=1, sticky="ew", pady=(0, 6), padx=(8, 0))
+        self.cover_path = None
+        self.cover_button = ttk.Button(cover_row, text="Choisir une image…", command=self._choose_cover)
+        self.cover_button.pack(side="left")
+        self.cover_label = ttk.Label(cover_row, style="Hint.TLabel",
+                                     text="facultatif : sinon celle de SoundCloud")
+        self.cover_label.pack(side="left", padx=(10, 0))
+        self.cover_clear = link(cover_row, "retirer", self._clear_cover)
         self.public_var = tk.BooleanVar(value=False)
         self.public_check = ttk.Checkbutton(source, text="Rendre la playlist publique (elle est privée par défaut)",
                                             variable=self.public_var)
-        self.public_check.grid(row=2, column=0, columnspan=2, sticky="w")
+        self.public_check.grid(row=3, column=0, columnspan=2, sticky="w")
         self.like_var = tk.BooleanVar(value=False)
         self.like_touched = False
         self.like_check = ttk.Checkbutton(source, text="Ajouter à mes Coups de cœur (titres likés)",
                                           variable=self.like_var, command=self._on_like_click)
-        self.like_check.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.like_check.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.kind = None  # « track » ou « playlist », deviné d'après le lien collé
 
         self.go_button = tk.Button(main, text="Copier vers Deezer", command=self._on_go,
@@ -305,6 +315,7 @@ class App:
                                      state="normal" if ready else "disabled")
         single = self.kind == "track"
         self.url_entry.configure(state="disabled" if running else "normal")
+        self.cover_button.configure(state="disabled" if running else "normal")
         self.like_check.configure(state="disabled" if running else "normal")
         self.name_entry.configure(state="disabled" if running or single else "normal")
         # Playlist publique : Deezer uniquement, et sans objet pour un son seul.
@@ -353,6 +364,26 @@ class App:
         if not self.like_touched:  # un son seul va dans les Coups de cœur, sauf si on a décoché
             self.like_var.set(kind == "track")
         self._refresh_go()
+
+    def _choose_cover(self):
+        path = filedialog.askopenfilename(
+            parent=self.root, title="Choisis l'image de la cover",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp *.gif"), ("Tous les fichiers", "*.*")])
+        if not path:
+            return
+        try:
+            covers.prepare(path, 64)  # vérifie tout de suite que l'image se lit
+        except covers.CoverError as exc:
+            messagebox.showerror(self.app_name, str(exc))
+            return
+        self.cover_path = path
+        self.cover_label.configure(text=displayable(Path(path).name), style="TLabel")
+        self.cover_clear.pack(side="left", padx=(10, 0))
+
+    def _clear_cover(self):
+        self.cover_path = None
+        self.cover_label.configure(text="facultatif : sinon celle de SoundCloud", style="Hint.TLabel")
+        self.cover_clear.pack_forget()
 
     def _on_like_click(self):
         self.like_touched = True
@@ -485,18 +516,20 @@ class App:
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
         self.worker = threading.Thread(target=self._transfer_worker, daemon=True, args=(
-            url, self.name_entry.get().strip() or None, self.public_var.get(), self.like_var.get(), self.apple))
+            url, self.name_entry.get().strip() or None, self.public_var.get(), self.like_var.get(), self.apple,
+            self.cover_path))
         self.worker.start()
         self._refresh_go()
 
-    def _transfer_worker(self, url, name, public, like, apple):
+    def _transfer_worker(self, url, name, public, like, apple, cover):
         emit = lambda kind, **data: self.events.put((kind, data))  # noqa: E731
         try:
             if apple:
-                result = transfer.run_apple(url, name=name, emit=emit, stop=self.stop, mode=self.apple_mode)
+                result = transfer.run_apple(url, name=name, cover=cover, emit=emit, stop=self.stop,
+                                            mode=self.apple_mode)
             else:
                 result = transfer.run(url, self.arl, profile_id=self.profile_id, name=name, public=public,
-                                      like=like, emit=emit, stop=self.stop)
+                                      like=like, cover=cover, emit=emit, stop=self.stop)
             emit("done", result=result)
         except transfer.Cancelled:
             emit("cancelled")
@@ -526,21 +559,27 @@ class App:
             self._write(f"✓ {text}", "ok")
         elif status == "already":
             self._write(f"✓ {text} (déjà fait)", "ok")
+        elif status == "cover":
+            self._write(f"✓ {text} (nouvelle cover)", "ok")
         else:
             self._write(f"✗ {text} : {detail}", "failed")
 
     def _apple_summary(self, result):
         title = displayable(result.title)
         self.open_button.configure(text="Ouvrir le dossier à glisser")
+        note = f" {result.note}" if result.note else ""
         if result.destination == "itunes":
             self.open_button.pack_forget()
             if result.kind == "track":
-                return f"C'est fait ! « {title} » est dans ta bibliothèque iTunes."
-            return f"Terminé ! {result.count} sons dans la playlist « {title} » d'iTunes."
+                return f"C'est fait ! « {title} » est dans ta bibliothèque iTunes.{note}"
+            return f"Terminé ! {result.count} sons dans la playlist « {title} » d'iTunes.{note}"
         if not result.to_import:
             self.open_button.pack_forget()
             return "Rien de nouveau : tout a déjà été préparé pour Apple Music."
         self._open_result()
+        if result.note:  # une cover perso à poser à la main
+            self.open_button.configure(text="Afficher le fichier")
+            return f"C'est prêt !{note}"
         what = "le MP3 sélectionné" if result.kind == "track" else "le dossier qui vient de s'ouvrir"
         return (f"C'est prêt ! Glisse {what} dans l'appli Apple Music, puis laisse-le à cet endroit : "
                 "Apple Music y lit les sons.")

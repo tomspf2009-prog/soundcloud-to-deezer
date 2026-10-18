@@ -185,6 +185,18 @@ def track_metadata(info):
     return title, artist, thumbs.get("t500x500") or info.get("thumbnail")
 
 
+def set_mp3_cover(path, cover):
+    """Remplace la cover intégrée au MP3 (le reste des tags ne bouge pas)."""
+    try:
+        tags = ID3(path)
+    except ID3NoHeaderError:
+        tags = ID3()
+    tags.delall("APIC")
+    data, mime = cover
+    tags.add(APIC(encoding=3, mime=mime, type=3, desc="Cover", data=data))
+    tags.save(path, v2_version=3)
+
+
 def tag_mp3(path, title, artist, cover):
     try:
         tags = ID3(path)

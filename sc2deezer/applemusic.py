@@ -97,3 +97,11 @@ class ITunes:
 
     def add_track(self, playlist, track):
         playlist.AddTrack(track)
+
+    def set_artwork(self, track, image_path):
+        """Remplace l'image d'un son déjà dans iTunes."""
+        artwork = track.Artwork
+        if artwork.Count > 0:
+            artwork.Item(1).SetArtworkFromFile(str(Path(image_path).resolve()))
+        else:
+            track.AddArtworkFromFile(str(Path(image_path).resolve()))

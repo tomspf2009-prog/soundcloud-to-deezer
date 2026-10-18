@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from . import applemusic, soundcloud
+from . import applemusic, covers, soundcloud
 from .config import default_output_dir
 from .deezer import Deezer
 from .soundcloud import PlaylistError
@@ -39,6 +39,7 @@ class Result:
     failures: list = field(default_factory=list)
     destination: str = "deezer"  # « deezer », « itunes » ou « folder » (dossier à glisser dans Apple Music)
     to_import: Path = None  # mode « folder » : le dossier (ou le MP3) à glisser dans Apple Music
+    note: str = ""  # information en plus pour la fin de la copie
 
 
 def file_name(text, max_len=120):
@@ -131,6 +132,21 @@ def known_uploads(root, user_id):
     return known
 
 
+def used_elsewhere(folder, user_id, sng_id):
+    """Ce MP3 Deezer est-il aussi suivi par une autre copie (une playlist) ?"""
+    for path in folder.parent.glob("*/state.json"):
+        if path.parent == folder:
+            continue
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        songs = ((state.get("deezer") or {}).get(str(user_id)) or {}).get("songs", {})
+        if any(song.get("sng_id") == sng_id for song in songs.values()):
+            return True
+    return False
+
+
 class Job:
     """Un dossier de MP3 + son suivi, pour un profil Deezer donné."""
 
@@ -154,8 +170,10 @@ class Job:
     def save(self):
         self.state_path.write_text(json.dumps(self.state, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def copy_track(self, sc_id, source_url):
-        """Télécharge (si besoin) un son, puis l'envoie dans « Mes MP3 ». Renvoie (libellé, statut)."""
+    def copy_track(self, sc_id, source_url, custom_cover=None):
+        """Télécharge (si besoin) un son, puis l'envoie dans « Mes MP3 ». Renvoie (libellé, statut).
+
+        `custom_cover` : cover perso, intégrée au MP3 avant l'envoi."""
         track = self.state["tracks"].setdefault(sc_id, {})
         song = self.songs.setdefault(sc_id, {})
         if song.get("sng_id") and track.get("title"):  # déjà sur Deezer : même plus besoin du MP3 local
@@ -170,10 +188,34 @@ class Job:
             return f"{track['artist']} - {track['title']}", "already"
         ensure_mp3(self.folder, self.state, sc_id, source_url, self.ffmpeg, self.save, self.fallback_cover)
         label = f"{track['artist']} - {track['title']}"
+        if custom_cover:
+            soundcloud.set_mp3_cover(self.folder / track["file"], custom_cover)
+            song["cover"] = covers.fingerprint(custom_cover)
         reused = self.existing.get(file_md5(self.folder / track["file"]))
         song["sng_id"] = reused or self.dz.upload_mp3(self.folder / track["file"])
         self.save()
         return label, "already" if reused else "ok"
+
+    def change_cover(self, sc_id, source_url, custom_cover, emit):
+        """Change la cover d'un son déjà sur Deezer. Deezer ne permet pas de modifier l'image d'un MP3 :
+        on renvoie le son avec la nouvelle cover, on le relike s'il l'était, puis on retire l'ancien.
+        Renvoie la raison si ce n'est pas possible, sinon None."""
+        song, track = self.songs[sc_id], self.state["tracks"][sc_id]
+        old = song["sng_id"]
+        if used_elsewhere(self.folder, self.dz.user_id, old):
+            return ("ce son est aussi dans une de tes playlists copiées : pour ne pas l'en retirer, "
+                    "sa cover n'a pas été changée")
+        emit("status", text="Envoi du son avec sa nouvelle cover…")
+        ensure_mp3(self.folder, self.state, sc_id, source_url, self.ffmpeg, self.save)
+        soundcloud.set_mp3_cover(self.folder / track["file"], custom_cover)
+        new = self.dz.upload_mp3(self.folder / track["file"])
+        if old in self.dz.liked_ids():
+            self.dz.like_songs([new])
+        # L'ancien n'est retiré qu'une fois le nouveau en place : en cas d'erreur, rien n'est perdu.
+        self.dz.call("personal_song.delete", {"upload_id": old})
+        song.update(sng_id=new, cover=covers.fingerprint(custom_cover))
+        self.save()
+        return None
 
     def like(self, songs, emit):
         """Like les sons qui ne l'ont jamais été par le programme (un like retiré à la main n'est pas remis)."""
@@ -187,9 +229,11 @@ class Job:
         return len(todo)
 
 
-def run(url, arl, *, profile_id=None, name=None, public=False, like=None, out_root=None, emit=None, stop=None):
+def run(url, arl, *, profile_id=None, name=None, public=False, like=None, cover=None, out_root=None,
+        emit=None, stop=None):
     """Copie une playlist ou un son. `like` : ajouter aux Coups de cœur (None = oui pour un son seul,
-    non pour une playlist). `emit(kind, **data)` reçoit l'avancement, `stop` (threading.Event) l'interrompt."""
+    non pour une playlist). `cover` : image perso (chemin) pour la playlist ou le son seul.
+    `emit(kind, **data)` reçoit l'avancement, `stop` (threading.Event) l'interrompt."""
     emit = emit or (lambda kind, **data: None)
 
     def check_stop():
@@ -203,17 +247,26 @@ def run(url, arl, *, profile_id=None, name=None, public=False, like=None, out_ro
     emit("status", text="Lecture du lien SoundCloud…")
     info = soundcloud.fetch(url)
     root = Path(out_root or default_output_dir())
-    if info.get("_type") == "playlist":
-        return _run_playlist(dz, url, info, root, name, public, bool(like), emit, check_stop)
-    return _run_single(dz, url, info, root, like is not False, emit)
+    playlist = info.get("_type") == "playlist"
+    custom = covers.prepare(cover, covers.PLAYLIST_SIZE if playlist else covers.TRACK_SIZE) if cover else None
+    if playlist:
+        return _run_playlist(dz, url, info, root, name, public, bool(like), emit, check_stop, custom)
+    return _run_single(dz, url, info, root, like is not False, emit, custom)
 
 
-def _run_single(dz, url, info, root, like, emit):
+def _run_single(dz, url, info, root, like, emit, custom=None):
     job = Job(dz, root / SINGLES_FOLDER)
     emit("playlist", title=info.get("title") or "son", total=1, folder=job.folder, source="track")
     emit("progress", index=1, total=1)
-    sc_id = str(info["id"])
-    label, status = job.copy_track(sc_id, info.get("webpage_url") or url)
+    sc_id, source = str(info["id"]), info.get("webpage_url") or url
+    label, status = job.copy_track(sc_id, source, custom)
+    failures = []
+    if custom and job.songs[sc_id].get("cover") != covers.fingerprint(custom):
+        problem = job.change_cover(sc_id, source, custom, emit)
+        if problem:
+            failures.append(("cover", problem))
+        else:
+            status = "cover"
     emit("track", index=1, total=1, text=label, status=status)
     liked = job.like([job.songs[sc_id]], emit) if like else 0
     return Result(
@@ -224,10 +277,11 @@ def _run_single(dz, url, info, root, like, emit):
         folder=job.folder,
         kind="track",
         liked=liked,
+        failures=failures,
     )
 
 
-def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
+def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop, custom=None):
     entries = pl["entries"]
     total = len(entries)
     sc_title = pl.get("title") or "SoundCloud"
@@ -266,6 +320,7 @@ def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
         playlist_id = dz.create_playlist(name or sc_title, f"Importée depuis SoundCloud : {url}", public)
         mine["playlist_id"] = playlist_id
         mine.pop("cover_done", None)
+        mine.pop("cover", None)
         for s in ordered:
             s.pop("added", None)
         job.save()
@@ -278,8 +333,18 @@ def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
             s["added"] = True
         job.save()
 
-    # 3. Cover de la playlist = artwork SoundCloud d'origine
-    if not mine.get("cover_done"):
+    # 3. Cover de la playlist : la cover perso si on en a choisi une, sinon celle de SoundCloud
+    if custom and mine.get("cover") != covers.fingerprint(custom):
+        emit("status", text="Ajout de ta cover à la playlist…")
+        cover_path = job.folder / "cover perso.jpg"
+        cover_path.write_bytes(custom[0])
+        try:
+            dz.set_playlist_cover(playlist_id, cover_path, custom[1])
+            mine.update(cover=covers.fingerprint(custom), cover_done=True)
+            job.save()
+        except Exception as exc:
+            failures.append(("cover de la playlist", friendly_error(exc)))
+    elif not custom and not mine.get("cover_done"):
         emit("status", text="Ajout de la cover de la playlist…")
         cover = soundcloud.best_artwork(soundcloud.page_image_url(url), prefer_original=True)
         if cover:
@@ -308,12 +373,13 @@ def _run_playlist(dz, url, pl, root, name, public, like, emit, check_stop):
     )
 
 
-def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None):
+def run_apple(url, *, name=None, cover=None, out_root=None, emit=None, stop=None, mode=None):
     """Copie une playlist ou un son vers Apple Music.
 
     mode « itunes » : import automatique dans iTunes, playlist comprise.
     mode « folder » : prépare un dossier (ou un MP3) à glisser dans l'appli Apple Music. Seuls les sons
     jamais livrés y sont mis, et rien n'est effacé ensuite : Apple Music lit les sons à cet endroit.
+    `cover` : image perso (chemin) pour la playlist ou le son seul.
     """
     emit = emit or (lambda kind, **data: None)
 
@@ -326,6 +392,8 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
     emit("status", text="Lecture du lien SoundCloud…")
     info = soundcloud.fetch(url)
     single = info.get("_type") != "playlist"
+    custom = covers.prepare(cover, covers.TRACK_SIZE if single else covers.PLAYLIST_SIZE) if cover else None
+    custom_fp = covers.fingerprint(custom) if custom else None
     entries = [{"id": info["id"], "url": info.get("webpage_url") or url}] if single else info["entries"]
     sc_title = info.get("title") or "SoundCloud"
     title = sc_title if single else (name or sc_title)
@@ -406,12 +474,15 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
             label = f"{track['artist']} - {track['title']}"
             target = to_import / f"{file_name(label) if single else f'{n:03d} - {file_name(label)}'}.mp3"
             shutil.copy2(folder / track["file"], target)
+            if single and custom:
+                soundcloud.set_mp3_cover(target, custom)
+                mine.setdefault("covers", {})[sc_id] = custom_fp
             songs[sc_id] = target.name
         if not single:
             applemusic.write_m3u8(to_import / f"{file_name(title)}.m3u8",
                                   [{**t, "file": f"{n:03d} - {file_name(t['artist'] + ' - ' + t['title'])}.mp3"}
                                    for n, _, t in fresh])
-            if not batches:  # 1re fois : la cover SoundCloud, à mettre comme illustration de la playlist
+            if not batches and not custom:  # 1re fois : la cover SoundCloud, comme illustration de la playlist
                 cover = soundcloud.best_artwork(soundcloud.page_image_url(url), prefer_original=True)
                 if cover:
                     data, mime = cover
@@ -419,6 +490,13 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
         else:
             to_import = to_import / songs[fresh[0][1]]
         save()
+
+    note = ""
+    if custom:
+        note = _apply_custom_apple_cover(custom, custom_fp, single, itunes, mode, folder, root, title,
+                                         entries, mine, songs, to_import, save, emit)
+        if isinstance(note, tuple):
+            note, to_import = note
 
     return Result(
         url="",
@@ -430,4 +508,44 @@ def run_apple(url, *, name=None, out_root=None, emit=None, stop=None, mode=None)
         failures=failures,
         destination=mode,
         to_import=to_import,
+        note=note,
     )
+
+
+def _apply_custom_apple_cover(custom, custom_fp, single, itunes, mode, folder, root, title,
+                              entries, mine, songs, to_import, save, emit):
+    """Pose la cover perso côté Apple. Renvoie une note pour l'utilisateur, ou (note, fichier à importer)."""
+    covers_done = mine.setdefault("covers", {})
+    if itunes:
+        if not single:
+            return "iTunes ne permet pas à un programme de changer l'image d'une playlist : ta cover n'a pas pu y être mise."
+        sc_id = str(entries[0]["id"])
+        track = itunes.track(songs.get(sc_id))
+        if track is not None and covers_done.get(sc_id) != custom_fp:
+            emit("status", text="Ajout de ta cover dans iTunes…")
+            image = folder / "cover perso.jpg"
+            image.write_bytes(custom[0])
+            itunes.set_artwork(track, image)
+            covers_done[sc_id] = custom_fp
+            save()
+        return ""
+    if single:  # son déjà livré : on met à jour sa copie, à réimporter
+        sc_id = str(entries[0]["id"])
+        delivered = root / APPLE_FOLDER / SINGLES_FOLDER / str(songs.get(sc_id, ""))
+        if covers_done.get(sc_id) != custom_fp and delivered.is_file():
+            soundcloud.set_mp3_cover(delivered, custom)
+            covers_done[sc_id] = custom_fp
+            save()
+            return ("Glisse à nouveau ce MP3 dans Apple Music pour mettre à jour sa cover.", delivered)
+        return ""
+    if mine.get("cover") == custom_fp:
+        return ""
+    target_dir = to_import or root / APPLE_FOLDER / file_name(title)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    image = target_dir / "cover de la playlist.jpg"
+    image.write_bytes(custom[0])
+    mine["cover"] = custom_fp
+    save()
+    if to_import:
+        return ""
+    return ("Ta cover est prête : dans Apple Music, ouvre ta playlist et choisis cette image comme illustration.", image)

@@ -7,7 +7,7 @@ from pathlib import Path
 from . import APP_NAME, REPO_URL, __version__, config, transfer
 from .deezer import Deezer, DeezerError
 
-ICONS = {"ok": "✓", "already": "=", "failed": "✗"}
+ICONS = {"ok": "✓", "already": "=", "cover": "✓", "failed": "✗"}
 
 
 def ask_arl():
@@ -89,6 +89,8 @@ def main(argv=None):
                         help="rendre la playlist publique (privée par défaut)")
     parser.add_argument("--coeur", "--like", dest="like", action="store_true", default=None,
                         help="ajouter les sons à tes Coups de cœur (automatique pour un son seul)")
+    parser.add_argument("--cover", dest="cover", type=Path,
+                        help="image perso (JPG, PNG…) pour la cover de la playlist ou du son seul")
     parser.add_argument("--sans-coeur", "--no-like", dest="like", action="store_false",
                         help="ne pas ajouter un son seul à tes Coups de cœur")
     parser.add_argument("--dossier", "--output", dest="output", type=Path,
@@ -119,7 +121,7 @@ def main(argv=None):
     try:
         profile_id = pick_profile(arl, args.profile, config.load().get("profile_id"))
         result = transfer.run(args.url, arl, profile_id=profile_id, name=args.name, public=args.public,
-                              like=args.like, out_root=args.output, emit=emit)
+                              like=args.like, cover=args.cover, out_root=args.output, emit=emit)
     except KeyboardInterrupt:
         print("\nArrêté. Relance la même commande pour reprendre là où tu t'es arrêté.")
         return 130
@@ -151,7 +153,8 @@ def run_apple(args):
     print("Apple Music :", "import automatique dans iTunes" if mode == "itunes"
           else "préparation d'un dossier à glisser dans l'appli Apple Music")
     try:
-        result = transfer.run_apple(args.url, name=args.name, out_root=args.output, emit=emit, mode=mode)
+        result = transfer.run_apple(args.url, name=args.name, cover=args.cover, out_root=args.output,
+                                    emit=emit, mode=mode)
     except KeyboardInterrupt:
         print("\nArrêté. Relance la même commande pour reprendre là où tu t'es arrêté.")
         return 130
@@ -166,6 +169,8 @@ def run_apple(args):
         print(f"✓ Prêt : glisse ceci dans l'appli Apple Music, puis laisse-le à cet endroit :\n  {result.to_import}")
     else:
         print("✓ Rien de nouveau : tout a déjà été préparé pour Apple Music.")
+    if result.note:
+        print(f"  {result.note}")
     for what, why in result.failures:
         print(f"  ✗ {what} : {why}")
     return 0

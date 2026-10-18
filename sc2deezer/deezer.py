@@ -191,6 +191,11 @@ class Deezer:
                 for sng_id in batch:
                     self.call("favorite_song.add", {"SNG_ID": sng_id})
 
+    def liked_ids(self):
+        """Identifiants des sons actuellement dans les Coups de cœur."""
+        res = self.call("song.getFavoriteIds", {"nb": 10000, "start": 0, "checksum": None}) or {}
+        return {int(x.get("SNG_ID", 0)) for x in res.get("data", [])}
+
     def library_url(self, page):
         """Lien vers une page de la bibliothèque du profil : « loved » (Coups de cœur) ou « personal_song »."""
         return f"https://www.deezer.com/fr/profile/{self.user_id}/{page}"
